@@ -1,0 +1,1412 @@
+<title>Soumrak — návrh aplikace pro sledování nálady</title>
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   TOKENS — document chrome. Light is the default; both themes
+   are defined at token level so components never live inside a
+   media query.
+   ───────────────────────────────────────────────────────────── */
+:root{
+  --ground:#F6F4FA;      /* off-white, biased toward the purple accent */
+  --surface:#FFFFFF;
+  --sunken:#EFEBF6;
+  --line:#DED8EC;
+  --line-soft:#EAE5F3;
+  --ink:#1E1B2E;
+  --ink-2:#4A4560;
+  --ink-3:#6E6885;
+  --accent:#6B32C9;
+  --accent-soft:#EDE4FC;
+  --accent-2:#B3186D;
+  --code-bg:#F1EDF9;
+  --shadow:0 1px 2px rgba(30,27,46,.06), 0 8px 24px rgba(30,27,46,.07);
+  --shadow-lift:0 2px 4px rgba(30,27,46,.08), 0 18px 48px rgba(30,27,46,.14);
+
+  /* mood ramp — identical in both themes; it is product data, not chrome */
+  --m-3:#F44D4D; --m-2:#EA726A; --m-1:#D89388; --m0:#B1B1C1;
+  --m1:#95CFA0;  --m2:#7DE68F;  --m3:#63FB78;
+
+  --font-display:"Cascadia Mono","Cascadia Code",Consolas,"Roboto Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --font-ui:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+
+  --measure:69ch;
+  --pad:clamp(1.25rem,4vw,2.5rem);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ground:#1C1D26; --surface:#22232E; --sunken:#191A22;
+    --line:#3B3E4F; --line-soft:#2E303D;
+    --ink:#F8F8F2; --ink-2:#C7C6D4; --ink-3:#8B8AA3;
+    --accent:#BD93F9; --accent-soft:#2E2740; --accent-2:#FF79C6;
+    --code-bg:#191A22;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lift:0 2px 4px rgba(0,0,0,.5), 0 22px 56px rgba(0,0,0,.55);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#1C1D26; --surface:#22232E; --sunken:#191A22;
+  --line:#3B3E4F; --line-soft:#2E303D;
+  --ink:#F8F8F2; --ink-2:#C7C6D4; --ink-3:#8B8AA3;
+  --accent:#BD93F9; --accent-soft:#2E2740; --accent-2:#FF79C6;
+  --code-bg:#191A22;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  --shadow-lift:0 2px 4px rgba(0,0,0,.5), 0 22px 56px rgba(0,0,0,.55);
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
+  --ground:#F6F4FA; --surface:#FFFFFF; --sunken:#EFEBF6;
+  --line:#DED8EC; --line-soft:#EAE5F3;
+  --ink:#1E1B2E; --ink-2:#4A4560; --ink-3:#6E6885;
+  --accent:#6B32C9; --accent-soft:#EDE4FC; --accent-2:#B3186D;
+  --code-bg:#F1EDF9;
+  --shadow:0 1px 2px rgba(30,27,46,.06), 0 8px 24px rgba(30,27,46,.07);
+  --shadow-lift:0 2px 4px rgba(30,27,46,.08), 0 18px 48px rgba(30,27,46,.14);
+  color-scheme:light;
+}
+
+/* ── base ───────────────────────────────────────────────────── */
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:var(--font-ui); font-size:1.0625rem; line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:76rem;margin:0 auto;padding:0 var(--pad) 6rem;}
+.col{max-width:var(--measure);}
+p{margin:0 0 1.1em;color:var(--ink-2);}
+p:last-child{margin-bottom:0;}
+strong{color:var(--ink);font-weight:600;}
+em{font-style:italic;}
+a{color:var(--accent);}
+h1,h2,h3,h4{color:var(--ink);text-wrap:balance;margin:0;}
+ul{margin:0 0 1.1em;padding-left:1.15em;color:var(--ink-2);}
+li{margin-bottom:.4em;}
+li::marker{color:var(--ink-3);}
+code{
+  font-family:var(--font-display);font-size:.86em;
+  background:var(--code-bg);padding:.14em .42em;border-radius:5px;
+  color:var(--ink);
+}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px;}
+
+.eyebrow{
+  font-family:var(--font-display);font-size:.72rem;font-weight:600;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);
+  margin:0 0 .9rem;
+}
+
+/* ── masthead ───────────────────────────────────────────────── */
+.mast{padding:clamp(3rem,9vw,6rem) 0 clamp(2rem,5vw,3.5rem);}
+.wordmark{
+  font-family:var(--font-display);font-weight:700;
+  font-size:clamp(2.9rem,10vw,5.5rem);line-height:.95;
+  letter-spacing:-.045em;margin:0 0 .35em;color:var(--ink);
+}
+.wordmark .dot{color:var(--accent);}
+.standfirst{
+  font-size:clamp(1.1rem,2.6vw,1.4rem);line-height:1.5;
+  color:var(--ink-2);max-width:44ch;margin:0 0 2rem;
+}
+.meta-grid{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);
+  border-radius:12px;overflow:hidden;max-width:52rem;
+}
+.meta-grid div{background:var(--surface);padding:.85rem 1rem;}
+.meta-grid dt{
+  font-family:var(--font-display);font-size:.66rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:.3rem;
+}
+.meta-grid dd{margin:0;font-size:.92rem;color:var(--ink);font-weight:500;}
+
+/* ── the ramp rule — a structural divider that encodes the
+      product's 7-point scale rather than decorating the page ── */
+.ramp-rule{display:flex;gap:2px;margin:clamp(3rem,7vw,5rem) 0 clamp(1.75rem,4vw,2.5rem);height:4px;}
+.ramp-rule span{flex:1;border-radius:2px;}
+
+section{scroll-margin-top:2rem;}
+.sec-head{display:flex;align-items:baseline;gap:.9rem;margin-bottom:1.6rem;flex-wrap:wrap;}
+.sec-head h2{
+  font-family:var(--font-display);font-weight:700;
+  font-size:clamp(1.5rem,4vw,2.15rem);letter-spacing:-.03em;line-height:1.15;
+}
+.sec-head .tag{
+  font-family:var(--font-display);font-size:.7rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);
+  border:1px solid var(--line);border-radius:999px;padding:.2rem .6rem;
+}
+h3{font-size:1.08rem;font-weight:600;margin:2.2rem 0 .7rem;letter-spacing:-.01em;}
+h3:first-child{margin-top:0;}
+
+/* ── callout ────────────────────────────────────────────────── */
+.callout{
+  border:1px solid var(--line);border-left:3px solid var(--m-3);
+  background:var(--surface);border-radius:0 12px 12px 0;
+  padding:1.25rem 1.4rem;margin:0 0 1.5rem;box-shadow:var(--shadow);
+}
+.callout.ok{border-left-color:var(--m2);}
+.callout.note{border-left-color:var(--accent);}
+.callout h4{
+  font-family:var(--font-display);font-size:.76rem;letter-spacing:.13em;
+  text-transform:uppercase;margin-bottom:.6rem;color:var(--ink-3);font-weight:600;
+}
+.callout p:last-child{margin-bottom:0;}
+
+/* ── cards ──────────────────────────────────────────────────── */
+.cards{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));margin-bottom:1.5rem;}
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  padding:1.15rem 1.25rem;box-shadow:var(--shadow);
+}
+.card h4{font-size:1rem;font-weight:600;margin-bottom:.45rem;letter-spacing:-.01em;}
+.card p{font-size:.94rem;line-height:1.55;margin:0;color:var(--ink-2);}
+.card .num{
+  font-family:var(--font-display);font-size:.72rem;letter-spacing:.14em;
+  color:var(--accent);display:block;margin-bottom:.55rem;font-weight:600;
+}
+
+/* ── tables ─────────────────────────────────────────────────── */
+.tw{overflow-x:auto;margin:0 0 1.5rem;border:1px solid var(--line);border-radius:12px;background:var(--surface);}
+table{border-collapse:collapse;width:100%;font-size:.93rem;min-width:32rem;}
+th,td{text-align:left;padding:.7rem .95rem;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+thead th{
+  font-family:var(--font-display);font-size:.68rem;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600;
+  background:var(--sunken);border-bottom:1px solid var(--line);
+}
+tbody tr:last-child td{border-bottom:0;}
+td{color:var(--ink-2);}
+td strong,th{color:var(--ink);}
+.num-col{font-family:var(--font-display);font-variant-numeric:tabular-nums;white-space:nowrap;}
+
+/* ── swatches ───────────────────────────────────────────────── */
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr));gap:.6rem;margin-bottom:1.5rem;}
+.sw{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface);}
+.sw .chip{height:52px;}
+.sw .lab{padding:.5rem .6rem;font-family:var(--font-display);font-size:.7rem;line-height:1.5;}
+.sw .lab b{display:block;color:var(--ink);font-weight:600;letter-spacing:.04em;}
+.sw .lab span{color:var(--ink-3);}
+
+.ramp-demo{
+  display:grid;grid-template-columns:repeat(7,1fr);gap:3px;
+  margin-bottom:.6rem;
+}
+.ramp-demo div{
+  border-radius:8px;padding:.7rem .35rem .6rem;text-align:center;
+  font-family:var(--font-display);color:#16171F;
+}
+.ramp-demo b{display:block;font-size:1rem;font-weight:700;}
+.ramp-demo span{font-size:.6rem;opacity:.82;letter-spacing:.02em;}
+.ramp-caption{font-size:.84rem;color:var(--ink-3);margin-bottom:1.5rem;font-family:var(--font-display);}
+
+/* ── device rail ────────────────────────────────────────────── */
+.rail{
+  display:flex;gap:1.5rem;overflow-x:auto;padding:.5rem var(--pad) 2rem;
+  margin:0 calc(-1 * var(--pad));scroll-snap-type:x proximity;
+}
+.rail::-webkit-scrollbar{height:8px;}
+.rail::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+.dev{flex:0 0 auto;scroll-snap-align:center;}
+.dev figcaption{
+  max-width:393px;margin-top:.9rem;font-size:.88rem;line-height:1.5;color:var(--ink-2);
+}
+.dev figcaption b{
+  display:block;color:var(--ink);font-family:var(--font-display);
+  font-size:.76rem;letter-spacing:.11em;text-transform:uppercase;margin-bottom:.35rem;
+}
+
+/* ═════════════════════════════════════════════════════════════
+   PHONE — Dracula, hardcoded. A device rendering does not follow
+   the reader's OS theme, so these tokens are scoped and fixed.
+   Built at the A55's true CSS viewport: 393 px.
+   ═════════════════════════════════════════════════════════════ */
+.phone{
+  --bg:#282A36; --surf:#21222C; --raised:#343746; --edge:#44475A;
+  --muted:#6272A4; --fg:#F8F8F2;
+  --purple:#BD93F9; --pink:#FF79C6; --cyan:#8BE9FD;
+  --green:#50FA7B; --orange:#FFB86C; --yellow:#F1FA8C; --red:#FF5555;
+
+  width:393px;height:772px;flex:0 0 393px;
+  background:var(--bg);color:var(--fg);
+  border-radius:30px;border:1px solid var(--edge);
+  box-shadow:var(--shadow-lift);
+  overflow:hidden;position:relative;
+  display:flex;flex-direction:column;
+  font-family:var(--font-ui);font-size:16px;line-height:1.45;
+  isolation:isolate;
+}
+.phone *{box-sizing:border-box;}
+
+.statusbar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:10px 20px 4px;font-size:12px;color:var(--fg);
+  font-family:var(--font-display);font-variant-numeric:tabular-nums;flex:0 0 auto;
+}
+.statusbar .icons{display:flex;gap:5px;align-items:center;opacity:.85;}
+
+.p-head{padding:6px 20px 12px;flex:0 0 auto;}
+.p-head h1{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1;color:var(--fg);}
+.p-head .date{font-size:13px;color:var(--muted);font-family:var(--font-display);margin-top:2px;}
+.p-head .rowtop{display:flex;justify-content:space-between;align-items:flex-start;}
+.p-head .count{
+  font-family:var(--font-display);font-size:11px;color:var(--muted);
+  border:1px solid var(--edge);border-radius:999px;padding:4px 9px;white-space:nowrap;
+}
+
+.p-body{flex:1 1 auto;overflow:hidden;padding:0 16px;display:flex;flex-direction:column;gap:12px;}
+.p-body.scroll{overflow-y:auto;}
+
+.pcard{background:var(--surf);border:1px solid #2E3040;border-radius:16px;padding:14px;}
+.pcard > .lbl{
+  font-family:var(--font-display);font-size:10.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:block;
+}
+.q{font-size:19px;font-weight:600;margin-bottom:14px;letter-spacing:-.01em;}
+
+/* mood row — 7 targets, the tightest touch case in the app */
+.moodrow{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+.mood{
+  aspect-ratio:1/1.06;border-radius:11px;border:1.5px solid transparent;
+  background:var(--raised);cursor:pointer;position:relative;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-display);font-size:15px;font-weight:600;color:#0F1016;
+  transition:transform .12s ease, box-shadow .12s ease;
+  padding:0;
+}
+@media (prefers-reduced-motion:reduce){.mood{transition:none;}}
+.mood[data-v="-3"]{background:var(--m-3);} .mood[data-v="-2"]{background:var(--m-2);}
+.mood[data-v="-1"]{background:var(--m-1);} .mood[data-v="0"]{background:var(--m0);}
+.mood[data-v="1"]{background:var(--m1);}   .mood[data-v="2"]{background:var(--m2);}
+.mood[data-v="3"]{background:var(--m3);}
+.mood.off{background:var(--raised);color:var(--muted);}
+.mood[aria-pressed="true"]{
+  box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--fg);
+  transform:translateY(-3px);
+}
+.anchors{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:7px;}
+.anchors span{
+  font-size:8.5px;text-align:center;color:var(--muted);line-height:1.25;
+  font-family:var(--font-display);
+}
+
+.quadrant{
+  margin-top:14px;padding:11px 12px;border-radius:12px;
+  background:var(--raised);border:1px solid var(--edge);
+  display:flex;align-items:center;gap:11px;
+}
+.quadrant .dotmark{width:9px;height:9px;border-radius:50%;background:var(--purple);flex:0 0 auto;}
+.quadrant .txt{font-size:13px;line-height:1.35;}
+.quadrant .txt b{display:block;font-size:14px;color:var(--fg);font-weight:600;}
+.quadrant .txt span{color:var(--muted);font-size:11.5px;font-family:var(--font-display);}
+
+/* generic 5-step scale */
+.scale5{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+.scale5 button{
+  height:46px;border-radius:11px;border:1px solid var(--edge);
+  background:var(--raised);color:var(--muted);cursor:pointer;
+  font-family:var(--font-display);font-size:14px;font-weight:600;padding:0;
+}
+.scale5 button.on{background:var(--purple);color:#1B1327;border-color:var(--purple);}
+.scale5.cy button.on{background:var(--cyan);color:#0E2126;border-color:var(--cyan);}
+.scale5.pk button.on{background:var(--pink);color:#2A0D1D;border-color:var(--pink);}
+.scaleends{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--muted);font-family:var(--font-display);}
+
+.chips{display:flex;flex-wrap:wrap;gap:6px;}
+.chip{
+  border:1px solid var(--edge);background:transparent;color:var(--muted);
+  border-radius:999px;padding:7px 12px;font-size:12.5px;cursor:pointer;
+  font-family:var(--font-ui);
+}
+.chip.on{background:var(--purple);border-color:var(--purple);color:#1B1327;font-weight:600;}
+
+.savebar{
+  flex:0 0 auto;padding:10px 16px 8px;
+  background:linear-gradient(to top,var(--bg) 62%,rgba(40,42,54,0));
+}
+.save{
+  width:100%;height:52px;border-radius:14px;border:0;cursor:pointer;
+  background:var(--purple);color:#1B1327;font-weight:700;font-size:16.5px;
+  font-family:var(--font-ui);letter-spacing:.01em;
+}
+.save[disabled]{background:var(--raised);color:var(--muted);cursor:default;}
+
+.pnav{
+  flex:0 0 auto;display:grid;grid-template-columns:repeat(4,1fr);
+  border-top:1px solid #2E3040;background:var(--surf);
+  padding:9px 0 calc(9px + 14px); /* the +14 stands in for the gesture-bar inset */
+}
+.pnav a{
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  font-size:10.5px;color:var(--muted);text-decoration:none;font-family:var(--font-display);
+  letter-spacing:.03em;
+}
+.pnav a.on{color:var(--purple);}
+.pnav .ico{width:22px;height:22px;display:block;}
+.pnav .ico svg{width:100%;height:100%;display:block;}
+
+/* calendar */
+.calhead{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px;}
+.calhead span{text-align:center;font-size:10px;color:var(--muted);font-family:var(--font-display);letter-spacing:.08em;}
+.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;}
+.cal{
+  aspect-ratio:1;border-radius:9px;display:flex;
+  align-items:center;justify-content:center;
+  font-family:var(--font-display);font-size:13px;font-variant-numeric:tabular-nums;
+  color:#12131A;font-weight:600;position:relative;
+}
+.cal.empty{background:transparent;}
+.cal.none{background:transparent;border:1px dashed var(--edge);color:var(--muted);font-weight:400;}
+.cal.future{background:transparent;color:#3F4356;font-weight:400;}
+.cal.retro::after{
+  content:"";position:absolute;inset:2px;border-radius:6px;
+  border:1.5px solid rgba(18,19,26,.55);
+}
+.cal.today{box-shadow:0 0 0 2px var(--bg),0 0 0 3.5px var(--fg);}
+
+.legend{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:10px;color:var(--muted);font-family:var(--font-display);}
+.legend .bars{display:flex;gap:2px;flex:1;}
+.legend .bars i{height:7px;flex:1;border-radius:2px;}
+
+/* stat + chart bits */
+.stat{display:flex;align-items:baseline;gap:9px;}
+.stat .big{font-family:var(--font-display);font-size:33px;font-weight:700;letter-spacing:-.03em;line-height:1;}
+.stat .delta{font-family:var(--font-display);font-size:12px;color:var(--green);}
+.stat .unit{font-size:11.5px;color:var(--muted);font-family:var(--font-display);}
+
+.assoc{display:flex;flex-direction:column;gap:9px;}
+.assoc .r{display:grid;grid-template-columns:78px 1fr 42px;align-items:center;gap:8px;font-size:12.5px;}
+.assoc .r .nm{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.assoc .r .track{height:16px;background:var(--raised);border-radius:4px;position:relative;overflow:hidden;}
+.assoc .r .track i{position:absolute;top:0;bottom:0;border-radius:3px;}
+.assoc .r .track .mid{position:absolute;top:0;bottom:0;left:50%;width:1px;background:var(--edge);}
+.assoc .r .v{font-family:var(--font-display);font-size:11.5px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums;}
+
+.bandnote{font-size:11px;color:var(--muted);font-family:var(--font-display);margin-top:9px;line-height:1.4;}
+
+/* questionnaire */
+.progress{height:3px;background:var(--raised);border-radius:2px;overflow:hidden;margin-bottom:16px;}
+.progress i{display:block;height:100%;background:var(--purple);border-radius:2px;}
+.opts{display:flex;flex-direction:column;gap:8px;}
+.opt{
+  display:flex;align-items:center;gap:11px;padding:13px 14px;
+  border:1px solid var(--edge);border-radius:12px;background:var(--surf);
+  cursor:pointer;font-size:14.5px;color:var(--fg);text-align:left;width:100%;
+  font-family:var(--font-ui);
+}
+.opt .rad{width:19px;height:19px;border-radius:50%;border:1.5px solid var(--muted);flex:0 0 auto;}
+.opt.on{border-color:var(--purple);background:rgba(189,147,249,.1);}
+.opt.on .rad{border-color:var(--purple);background:var(--purple);box-shadow:inset 0 0 0 3.5px var(--surf);}
+.opt .sc{margin-left:auto;font-family:var(--font-display);font-size:11px;color:var(--muted);}
+
+.crisis{border:1px solid var(--edge);border-left:3px solid var(--orange);background:var(--surf);border-radius:0 12px 12px 0;padding:13px 14px;}
+.crisis b{display:block;font-size:14.5px;margin-bottom:5px;}
+.crisis p{font-size:12.5px;color:var(--muted);line-height:1.45;margin:0 0 10px;}
+.crisis .line{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid #2E3040;font-size:12.5px;}
+.crisis .line b{margin:0;font-size:12.5px;font-weight:500;color:var(--fg);}
+.crisis .line span{font-family:var(--font-display);color:var(--cyan);font-size:13px;}
+
+.summary-row{display:flex;gap:8px;}
+.summary-row .cellb{
+  flex:1;background:var(--raised);border-radius:11px;padding:9px 10px;
+}
+.summary-row .cellb .k{font-family:var(--font-display);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);}
+.summary-row .cellb .v{font-size:15px;font-weight:600;margin-top:2px;}
+
+.tierbar{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--muted);font-family:var(--font-display);margin:2px 0 -2px;}
+.tierbar i{flex:1;height:1px;background:var(--edge);}
+
+/* ── flow diagram ───────────────────────────────────────────── */
+.tiers{display:grid;gap:.75rem;margin-bottom:1.5rem;}
+.tier{
+  display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:.95rem 1.15rem;box-shadow:var(--shadow);
+}
+.tier .t{
+  font-family:var(--font-display);font-size:.7rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--accent);font-weight:600;white-space:nowrap;
+}
+.tier .d{font-size:.94rem;color:var(--ink-2);line-height:1.5;}
+.tier .d b{color:var(--ink);}
+.tier .time{
+  font-family:var(--font-display);font-size:.8rem;color:var(--ink-3);
+  white-space:nowrap;font-variant-numeric:tabular-nums;
+}
+
+/* ── phases ─────────────────────────────────────────────────── */
+.phases{display:grid;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface);}
+.phase{display:grid;grid-template-columns:3.2rem 1fr;gap:1rem;padding:1rem 1.15rem;border-bottom:1px solid var(--line-soft);}
+.phase:last-child{border-bottom:0;}
+.phase .n{
+  font-family:var(--font-display);font-size:1.5rem;font-weight:700;
+  color:var(--accent);line-height:1;letter-spacing:-.04em;
+}
+.phase h4{font-size:1rem;font-weight:600;margin-bottom:.25rem;}
+.phase p{font-size:.92rem;margin:0;line-height:1.5;}
+.phase .done{
+  display:block;margin-top:.45rem;font-family:var(--font-display);font-size:.78rem;
+  color:var(--ink-3);border-left:2px solid var(--line);padding-left:.7rem;
+}
+
+.foot{
+  margin-top:clamp(3rem,7vw,5rem);padding-top:1.5rem;border-top:1px solid var(--line);
+  font-size:.86rem;color:var(--ink-3);font-family:var(--font-display);line-height:1.6;
+}
+
+@media (max-width:520px){
+  .tier{grid-template-columns:1fr;gap:.4rem;}
+  .tier .time{justify-self:start;}
+  .phase{grid-template-columns:2.4rem 1fr;gap:.75rem;}
+}
+</style>
+
+
+<div class="wrap">
+
+<header class="mast col">
+  <p class="eyebrow">Návrh produktu · v1.0 · 30. 7. 2026</p>
+  <h1 class="wordmark">Soumrak<span class="dot">.</span></h1>
+  <p class="standfirst">
+    Deník nálady na každý večer. Třicet sekund denně, klinicky ověřené škály pod
+    povrchem a grafy, které netvrdí víc, než data unesou.
+  </p>
+  <dl class="meta-grid">
+    <div><dt>Zařízení</dt><dd>Galaxy A55 · 393×851</dd></div>
+    <div><dt>Systém</dt><dd>Android 16 · One UI 8.5</dd></div>
+    <div><dt>Platforma</dt><dd>PWA, offline</dd></div>
+    <div><dt>Téma</dt><dd>Dracula</dd></div>
+    <div><dt>Jazyk</dt><dd>čeština</dd></div>
+  </dl>
+</header>
+
+<div class="ramp-rule" aria-hidden="true">
+  <span style="background:var(--m-3)"></span><span style="background:var(--m-2)"></span>
+  <span style="background:var(--m-1)"></span><span style="background:var(--m0)"></span>
+  <span style="background:var(--m1)"></span><span style="background:var(--m2)"></span>
+  <span style="background:var(--m3)"></span>
+</div>
+
+<!-- ══════════════ 1. CONSTRAINT ══════════════ -->
+<section id="constraint" class="col">
+  <div class="sec-head"><h2>Nejdřív jedna překážka</h2><span class="tag">blokující</span></div>
+
+  <div class="callout">
+    <h4>Zkopírovat soubory do telefonu a otevřít je nestačí</h4>
+    <p>
+      Chrome na Androidu považuje <code>file://</code> za neprůhledný původ (opaque
+      origin). Na něm nefunguje IndexedDB, localStorage ani service worker. Aplikace
+      by se spustila, ale <strong>každý zápis by při zavření zmizel</strong>.
+    </p>
+    <p>
+      PWA potřebuje zabezpečený původ. Doporučení: přetáhnout složku na
+      <strong>GitHub Pages nebo Netlify Drop</strong> (zdarma, jednou), pak v Chromu
+      „Přidat na plochu“. Tím to končí — service worker si vše nacachuje a aplikace
+      od té chvíle běží plně offline. <strong>Data zůstávají výhradně v telefonu</strong>,
+      server hostuje jen statické HTML a CSS.
+    </p>
+    <p>
+      Když je hostování z principu nepřijatelné: <code>PWABuilder</code> nebo
+      <code>Capacitor</code> vyrobí ze stejného zdroje instalovatelné APK. Stojí to
+      Android Studio navíc.
+    </p>
+  </div>
+</section>
+
+<div class="ramp-rule" aria-hidden="true">
+  <span style="background:var(--m-3)"></span><span style="background:var(--m-2)"></span>
+  <span style="background:var(--m-1)"></span><span style="background:var(--m0)"></span>
+  <span style="background:var(--m1)"></span><span style="background:var(--m2)"></span>
+  <span style="background:var(--m3)"></span>
+</div>
+
+<!-- ══════════════ 2. PRINCIPLES ══════════════ -->
+<section id="principles">
+  <div class="col"><div class="sec-head"><h2>Čtyři pravidla</h2><span class="tag">z nich plyne zbytek</span></div></div>
+  <div class="cards">
+    <div class="card">
+      <span class="num">01</span>
+      <h4>Špatný den se musí zapsat taky</h4>
+      <p>Ve dnech, kdy na to nejsou síly, je zápis nejcennější — a nejmíň pravděpodobný.
+      Proto stačí jeden tap: nálada uloží platný záznam, všechno ostatní je dobrovolné.</p>
+    </div>
+    <div class="card">
+      <span class="num">02</span>
+      <h4>Dvě osy, ne jedna</h4>
+      <p>Russellův cirkumplexní model: valence a aktivace jsou skoro nezávislé.
+      Jedna škála od smutku k radosti neodliší <em>únavu</em> od <em>napětí</em> — a právě
+      tenhle rozdíl je u deprese a úzkosti podstatný.</p>
+    </div>
+    <div class="card">
+      <span class="num">03</span>
+      <h4>Žádná statistika bez dat</h4>
+      <p>Korelace ze šesti bodů je horší než prázdné místo. Každý graf má práh
+      minimálního <code>n</code>, každý průměr interval spolehlivosti a každý vztah je
+      popsaný jako souvislost, ne příčina.</p>
+    </div>
+    <div class="card">
+      <span class="num">04</span>
+      <h4>Měření nesmí ublížit</h4>
+      <p>Žádná série bez přerušení, žádné večerní volné psaní bez limitu, žádná
+      diagnóza z grafu. Poznámka má strop 280 znaků záměrně — otevřené večerní
+      psaní je u deprese známý spouštěč ruminace.</p>
+    </div>
+  </div>
+</section>
+
+<div class="ramp-rule" aria-hidden="true">
+  <span style="background:var(--m-3)"></span><span style="background:var(--m-2)"></span>
+  <span style="background:var(--m-1)"></span><span style="background:var(--m0)"></span>
+  <span style="background:var(--m1)"></span><span style="background:var(--m2)"></span>
+  <span style="background:var(--m3)"></span>
+</div>
+
+<!-- ══════════════ 3. SCREENS ══════════════ -->
+<section id="screens">
+  <div class="col">
+    <div class="sec-head"><h2>Obrazovky</h2><span class="tag">393 px — skutečná šířka A55</span></div>
+    <p>
+      Makety níž nejsou obrázky. Je to živé HTML v cílovém rozlišení — v prvním
+      telefonu jde na škálu nálady i energie klikat a kvadrant cirkumplexu se
+      přepočítá. Táhnutím do strany se projde celá řada.
+    </p>
+  </div>
+
+  <div class="rail" id="rail">
+
+    <!-- ── 1 · DNES, before logging ── -->
+    <figure class="dev">
+      <div class="phone" id="ph1">
+        <div class="statusbar"><span>21:04</span><span class="icons">▾ ▮▮▮ 84 %</span></div>
+        <div class="p-head">
+          <div class="rowtop">
+            <div>
+              <h1>Dnes</h1>
+              <div class="date">čtvrtek 30. července</div>
+            </div>
+            <span class="count">25 z 30 dní</span>
+          </div>
+        </div>
+        <div class="p-body">
+          <div class="pcard">
+            <div class="q">Jak byl dnešek?</div>
+            <div class="moodrow" id="moodrow">
+              <button class="mood off" data-m="-3" aria-pressed="false">−3</button>
+              <button class="mood off" data-m="-2" aria-pressed="false">−2</button>
+              <button class="mood off" data-m="-1" aria-pressed="false">−1</button>
+              <button class="mood off" data-m="0"  aria-pressed="false">0</button>
+              <button class="mood off" data-m="1"  aria-pressed="false">+1</button>
+              <button class="mood off" data-m="2"  aria-pressed="false">+2</button>
+              <button class="mood off" data-m="3"  aria-pressed="false">+3</button>
+            </div>
+            <div class="anchors">
+              <span>velmi<br>špatný</span><span>špatný</span><span>spíš<br>špatný</span>
+              <span>neut&shy;rální</span><span>spíš<br>dobrý</span><span>dobrý</span><span>skvělý</span>
+            </div>
+            <div class="quadrant">
+              <span class="dotmark" id="qdot"></span>
+              <span class="txt"><b id="qtitle">Zatím nevybráno</b><span id="qsub">valence × aktivace</span></span>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Energie</span>
+            <div class="scale5" id="enrow">
+              <button>1</button><button>2</button><button>3</button><button>4</button><button>5</button>
+            </div>
+            <div class="scaleends"><span>vyčerpaný</span><span>nabitý</span></div>
+          </div>
+
+          <div class="tierbar"><span>volitelné</span><i></i><span>přidat víc ▾</span></div>
+        </div>
+        <div class="savebar"><button class="save" id="savebtn" disabled>Vyber náladu</button></div>
+        <nav class="pnav">
+          <a class="on"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="3.4"/></svg></span>Dnes</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg></span>Kalendář</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l5-6 4 3 6.5-8"/><path d="M4 21h16"/></svg></span>Přehled</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span>Více</a>
+        </nav>
+      </div>
+      <figcaption><b>1 · Dnes — před zápisem</b>
+        Vstupní obrazovka <em>je</em> formulář. Žádné plovoucí tlačítko: nejčastější akce
+        nesmí stát druhý tap. Sedm terčů má po 47 px, těsně nad hranicí použitelnosti —
+        proto pod nimi nesmí ubýt vertikální prostor.</figcaption>
+    </figure>
+
+    <!-- ── 2 · ENTRY, expanded ── -->
+    <figure class="dev">
+      <div class="phone">
+        <div class="statusbar"><span>21:06</span><span class="icons">▾ ▮▮▮ 84 %</span></div>
+        <div class="p-head"><div class="rowtop"><div>
+          <h1>Zápis</h1><div class="date">čtvrtek 30. července</div>
+        </div></div></div>
+        <div class="p-body scroll">
+          <div class="pcard">
+            <span class="lbl">Úzkost</span>
+            <div class="scale5 pk">
+              <button>1</button><button>2</button><button>3</button><button class="on">4</button><button>5</button>
+            </div>
+            <div class="scaleends"><span>klid</span><span>panika</span></div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Spánek</span>
+            <div class="stat" style="margin-bottom:12px">
+              <span class="big" style="color:var(--cyan)">6,5</span>
+              <span class="unit">hodin · včera 22:40 → 05:10</span>
+            </div>
+            <div class="scale5 cy">
+              <button>1</button><button class="on">2</button><button>3</button><button>4</button><button>5</button>
+            </div>
+            <div class="scaleends"><span>mizerná kvalita</span><span>výborná</span></div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Co dnes hrálo roli?</span>
+            <div class="chips">
+              <button class="chip on">Práce</button><button class="chip">Rodina</button>
+              <button class="chip">Přátelé</button><button class="chip">Sport</button>
+              <button class="chip on">Venku</button><button class="chip">Odpočinek</button>
+              <button class="chip on">Konflikt</button><button class="chip">Nemoc</button>
+              <button class="chip">Alkohol</button><button class="chip">Káva</button>
+              <button class="chip">Samota</button><button class="chip">Tvorba</button>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Poznámka · nepovinné</span>
+            <div style="color:var(--muted);font-size:14px;line-height:1.5">Jedna věta o dnešku…</div>
+            <div style="display:flex;justify-content:space-between;margin-top:10px;font-family:var(--font-display);font-size:10px;color:var(--muted)">
+              <span>strop 280 znaků je záměr</span><span>0 / 280</span>
+            </div>
+          </div>
+          <div style="height:4px;flex:0 0 auto"></div>
+        </div>
+        <div class="savebar"><button class="save">Uložit den</button></div>
+      </div>
+      <figcaption><b>2 · Zápis — vrstva 1 a 2</b>
+        Postupné odkrývání. Uložit jde kdykoli, i uprostřed. Každá interakce se
+        okamžitě ukládá jako rozepsaný záznam — telefonát uprostřed zápisu nesmí
+        stát celý večer.</figcaption>
+    </figure>
+
+    <!-- ── 3 · CALENDAR ── -->
+    <figure class="dev">
+      <div class="phone">
+        <div class="statusbar"><span>21:08</span><span class="icons">▾ ▮▮▮ 83 %</span></div>
+        <div class="p-head"><div class="rowtop"><div>
+          <h1>Červenec</h1><div class="date">2026 · průměr +0,2 · 25 dní</div>
+        </div><span class="count">‹ &nbsp; ›</span></div></div>
+        <div class="p-body">
+          <div class="pcard">
+            <div class="calhead">
+              <span>PO</span><span>ÚT</span><span>ST</span><span>ČT</span><span>PÁ</span><span>SO</span><span>NE</span>
+            </div>
+            <div class="calgrid" id="calgrid"></div>
+            <div class="legend">
+              <span>−3</span>
+              <span class="bars">
+                <i style="background:var(--m-3)"></i><i style="background:var(--m-2)"></i>
+                <i style="background:var(--m-1)"></i><i style="background:var(--m0)"></i>
+                <i style="background:var(--m1)"></i><i style="background:var(--m2)"></i>
+                <i style="background:var(--m3)"></i>
+              </span>
+              <span>+3</span>
+            </div>
+            <div class="bandnote">Přerušovaný obrys = nezapsáno · tenký rámeček = doplněno zpětně</div>
+          </div>
+          <div class="pcard">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-size:14.5px;font-weight:600">Chybí 5 dní</div>
+                <div style="font-size:12px;color:var(--muted)">11.–14. a 21. července</div>
+              </div>
+              <button class="chip on" style="padding:9px 14px">Doplnit</button>
+            </div>
+          </div>
+        </div>
+        <nav class="pnav">
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg></span>Dnes</a>
+          <a class="on"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg></span>Kalendář</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l5-6 4 3 6.5-8"/><path d="M4 21h16"/></svg></span>Přehled</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span>Více</a>
+        </nav>
+      </div>
+      <figcaption><b>3 · Kalendář</b>
+        Číslo dne je v buňce vždy — barva sama nikdy nenese hodnotu. Chybějící dny
+        se neschovávají ani nevyčítají; jsou to prostě prázdná místa s tlačítkem.</figcaption>
+    </figure>
+
+    <!-- ── 4 · INSIGHTS ── -->
+    <figure class="dev">
+      <div class="phone">
+        <div class="statusbar"><span>21:10</span><span class="icons">▾ ▮▮▮ 83 %</span></div>
+        <div class="p-head"><div class="rowtop"><div>
+          <h1>Přehled</h1><div class="date">posledních 30 dní</div>
+        </div></div></div>
+        <div class="p-body scroll">
+          <div class="pcard">
+            <span class="lbl">Průměrná nálada</span>
+            <div class="stat">
+              <span class="big">+0,2</span>
+              <span class="delta">▲ 0,9 oproti předchozím 30 dnům</span>
+            </div>
+            <svg viewBox="0 0 344 108" id="trend" style="width:100%;height:auto;margin-top:12px;display:block"></svg>
+            <div class="bandnote">Tenká čára = denní hodnoty · plná = klouzavý sedmidenní průměr.
+              Mezery se nedopočítávají.</div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Co s náladou souvisí</span>
+            <div class="assoc">
+              <div class="r"><span class="nm">Sport</span>
+                <span class="track"><span class="mid"></span><i style="left:50%;width:31%;background:var(--m2)"></i></span>
+                <span class="v">+0,9</span></div>
+              <div class="r"><span class="nm">Venku</span>
+                <span class="track"><span class="mid"></span><i style="left:50%;width:22%;background:var(--m2)"></i></span>
+                <span class="v">+0,6</span></div>
+              <div class="r"><span class="nm">Přátelé</span>
+                <span class="track"><span class="mid"></span><i style="left:50%;width:17%;background:var(--m1)"></i></span>
+                <span class="v">+0,5</span></div>
+              <div class="r"><span class="nm">Konflikt</span>
+                <span class="track"><span class="mid"></span><i style="right:50%;width:38%;background:var(--m-3)"></i></span>
+                <span class="v">−1,1</span></div>
+              <div class="r"><span class="nm">Špatný spánek</span>
+                <span class="track"><span class="mid"></span><i style="right:50%;width:27%;background:var(--m-2)"></i></span>
+                <span class="v">−0,8</span></div>
+            </div>
+            <div class="bandnote">Rozdíl průměrů se štítkem a bez něj · n ≥ 5 · permutační test
+              <br><strong style="color:var(--fg)">Souvislost, ne příčina.</strong></div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Spánek → nálada druhý den</span>
+            <div class="stat" style="margin-bottom:6px">
+              <span class="big" style="font-size:26px;color:var(--cyan)">ρ 0,41</span>
+              <span class="unit">n = 62 dní</span>
+            </div>
+            <div class="bandnote">Zobrazuje se až od 20 párů. Pod tím hlásí
+              „ještě málo dat“ místo čísla.</div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Den v týdnu</span>
+            <svg viewBox="0 0 344 86" id="weekday" style="width:100%;height:auto;display:block"></svg>
+            <div class="bandnote">Svislé úsečky = 95% interval spolehlivosti. Bez nich
+              by šlo z šumu vyčíst cokoli.</div>
+          </div>
+          <div style="height:4px;flex:0 0 auto"></div>
+        </div>
+        <nav class="pnav">
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg></span>Dnes</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg></span>Kalendář</a>
+          <a class="on"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l5-6 4 3 6.5-8"/><path d="M4 21h16"/></svg></span>Přehled</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span>Více</a>
+        </nav>
+      </div>
+      <figcaption><b>4 · Přehled</b>
+        Souhrn nahoře, detail dole. Každá karta si nese vlastní práh <code>n</code> a
+        vlastní míru nejistoty — a nikde není sloveso, které by naznačovalo příčinu.</figcaption>
+    </figure>
+
+    <!-- ── 5 · PHQ-9 ── -->
+    <figure class="dev">
+      <div class="phone">
+        <div class="statusbar"><span>21:12</span><span class="icons">▾ ▮▮▮ 82 %</span></div>
+        <div class="p-head"><div class="rowtop"><div>
+          <h1>PHQ-9</h1><div class="date">otázka 9 z 9 · jednou za 14 dní</div>
+        </div></div></div>
+        <div class="p-body scroll">
+          <div class="progress"><i style="width:100%"></i></div>
+          <div class="pcard">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:9px;line-height:1.4">
+              Jak často vás během <strong style="color:var(--fg)">posledních 2 týdnů</strong>
+              obtěžovaly následující potíže?
+            </div>
+            <div class="q" style="font-size:17px;margin-bottom:16px">
+              Myšlenky, že byste radši byl/a mrtvý/á, nebo že si nějak ublížíte
+            </div>
+            <div class="opts">
+              <button class="opt"><span class="rad"></span>Vůbec ne<span class="sc">0</span></button>
+              <button class="opt on"><span class="rad"></span>Několik dní<span class="sc">1</span></button>
+              <button class="opt"><span class="rad"></span>Více než polovinu dní<span class="sc">2</span></button>
+              <button class="opt"><span class="rad"></span>Téměř každý den<span class="sc">3</span></button>
+            </div>
+          </div>
+
+          <div class="crisis">
+            <b>Ještě něco.</b>
+            <p>U poslední otázky byla zvolena jiná odpověď než „Vůbec ne“. Takové
+              myšlenky jsou u deprese časté a nejsou selháním. Nemusí se to řešit o samotě.</p>
+            <div class="line"><b>Linka první psychické pomoci</b><span>116 123</span></div>
+            <div class="line"><b>Linka bezpečí · do 26 let</b><span>116 111</span></div>
+            <div class="line"><b>Záchranná služba</b><span>155</span></div>
+          </div>
+          <div style="height:4px;flex:0 0 auto"></div>
+        </div>
+        <div class="savebar"><button class="save">Dokončit · skóre 14</button></div>
+      </div>
+      <figcaption><b>5 · Dotazník + bezpečnostní karta</b>
+        Devátá položka PHQ-9 se ptá na sebevražedné myšlenky. Jakákoli odpověď nad
+        nulou otevře klidnou kartu — ne modál, ne poplach, ne červená obrazovka.
+        Stejné kontakty jsou trvale ve <strong>Více → Když je zle</strong>.</figcaption>
+    </figure>
+
+    <!-- ── 6 · DNES after save ── -->
+    <figure class="dev">
+      <div class="phone">
+        <div class="statusbar"><span>21:14</span><span class="icons">▾ ▮▮▮ 82 %</span></div>
+        <div class="p-head"><div class="rowtop"><div>
+          <h1>Dnes</h1><div class="date">čtvrtek 30. července · zapsáno 21:14</div>
+        </div><span class="count">26 z 30 dní</span></div></div>
+        <div class="p-body">
+          <div class="pcard">
+            <div style="display:flex;align-items:center;gap:13px;margin-bottom:14px">
+              <div style="width:52px;height:52px;border-radius:14px;background:var(--m-1);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-size:20px;font-weight:700;color:#12131A">−1</div>
+              <div>
+                <div style="font-size:17px;font-weight:600">Spíš špatný den</div>
+                <div style="font-size:12px;color:var(--muted);font-family:var(--font-display)">napětí · nízká energie</div>
+              </div>
+              <button class="chip" style="margin-left:auto">Upravit</button>
+            </div>
+            <div class="summary-row">
+              <div class="cellb"><div class="k">Energie</div><div class="v">2 / 5</div></div>
+              <div class="cellb"><div class="k">Úzkost</div><div class="v">4 / 5</div></div>
+              <div class="cellb"><div class="k">Spánek</div><div class="v">6,5 h</div></div>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Včera</span>
+            <div style="display:flex;align-items:center;gap:11px">
+              <div style="width:34px;height:34px;border-radius:10px;background:var(--m0);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-size:14px;font-weight:700;color:#12131A">0</div>
+              <div style="font-size:13.5px;color:var(--muted)">Neutrální · včera se zobrazuje
+                <strong style="color:var(--fg)">až teď</strong>, aby neovlivnilo dnešní hodnocení</div>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <span class="lbl">Posledních 7 dní</span>
+            <svg viewBox="0 0 312 54" id="spark" style="width:100%;height:auto;display:block"></svg>
+          </div>
+
+          <div class="pcard" style="border-color:#3A3450;background:rgba(189,147,249,.07)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-size:14.5px;font-weight:600">WHO-5 je na řadě</div>
+                <div style="font-size:12px;color:var(--muted)">5 otázek · asi minuta</div>
+              </div>
+              <button class="chip on" style="padding:9px 14px">Vyplnit</button>
+            </div>
+          </div>
+        </div>
+        <nav class="pnav">
+          <a class="on"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg></span>Dnes</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg></span>Kalendář</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l5-6 4 3 6.5-8"/><path d="M4 21h16"/></svg></span>Přehled</a>
+          <a><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span>Více</a>
+        </nav>
+      </div>
+      <figcaption><b>6 · Dnes — po uložení</b>
+        Jakmile je zapsáno, obrazovka se přepne na souhrn a přestane se ptát.
+        Až tady se objeví včerejšek — před hodnocením by fungoval jako kotva.</figcaption>
+    </figure>
+
+  </div>
+</section>
+
+<div class="ramp-rule" aria-hidden="true">
+  <span style="background:var(--m-3)"></span><span style="background:var(--m-2)"></span>
+  <span style="background:var(--m-1)"></span><span style="background:var(--m0)"></span>
+  <span style="background:var(--m1)"></span><span style="background:var(--m2)"></span>
+  <span style="background:var(--m3)"></span>
+</div>
+
+<!-- ══════════════ 4. ENTRY FLOW ══════════════ -->
+<section id="flow" class="col">
+  <div class="sec-head"><h2>Vrstvy zápisu</h2><span class="tag">postupné odkrývání</span></div>
+  <p>
+    Jeden svisle rolovaný sloupec karet. Zásadní vlastnost: <strong>platný záznam
+    vzniká už na první kartě</strong>. Všechno pod ní je dobrovolné a lze to kdykoli
+    opustit, aniž by se ztratilo, co už je vyplněné.
+  </p>
+  <div class="tiers">
+    <div class="tier">
+      <span class="t">Vrstva 0</span>
+      <span class="d"><b>Nálada −3…+3.</b> Jeden tap. Tlačítko Uložit se aktivuje okamžitě.</span>
+      <span class="time">~15 s</span>
+    </div>
+    <div class="tier">
+      <span class="t">Vrstva 1</span>
+      <span class="d"><b>Energie · Úzkost · Spánek · Štítky.</b> Jedno posunutí prstem.</span>
+      <span class="time">~45 s</span>
+    </div>
+    <div class="tier">
+      <span class="t">Vrstva 2</span>
+      <span class="d"><b>Léky · Poznámka · Co dnes pomohlo.</b> Za tlačítkem „Přidat víc“.</span>
+      <span class="time">~2 min</span>
+    </div>
+    <div class="tier">
+      <span class="t">Vrstva 3</span>
+      <span class="d"><b>WHO-5 týdně, PHQ-9 a GAD-7 po 14 dnech.</b> Nabídne se na Dnes, nikdy neblokuje.</span>
+      <span class="time">1–3 min</span>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 5. BEHAVIOUR ══════════════ -->
+<section id="behaviour" class="col">
+  <div class="sec-head"><h2>Co lidé skutečně dělají</h2><span class="tag">a co s tím</span></div>
+  <div class="tw">
+    <table>
+      <thead><tr><th style="width:44%">Chování</th><th>Reakce návrhu</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Tři dny zapomene, pak má pocit dluhu</strong></td>
+          <td>Kalendář ukáže mezery bez komentáře. <code>Doplnit</code> jde 7 dní zpět, záznam se označí jako zpětný.</td></tr>
+        <tr><td><strong>Zapisuje ve 2:00 a myslí včerejšek</strong></td>
+          <td>Zápis mezi 00:00 a 04:00 se přiřadí k <em>předchozímu</em> dni. Datum je vidět a jde přepnout.</td></tr>
+        <tr><td><strong>Ploché dny hodnotí pořád nulou</strong></td>
+          <td>To je v pořádku — proto tam neutrální bod je. Vynucený příklon k jedné straně je chyba měření.</td></tr>
+        <tr><td><strong>Otevře appku, aby si četla, ne psala</strong></td>
+          <td>Po uložení se <em>Dnes</em> přepne na souhrn se sedmidenním sparklinem a přestane se ptát.</td></tr>
+        <tr><td><strong>Za hodinu chce hodnocení změnit</strong></td>
+          <td>Volně editovatelné, zaznamená se <code>updatedAt</code>. Žádné varování, žádný trest.</td></tr>
+        <tr><td><strong>Po dvou týdnech přestane</strong></td>
+          <td>Jediná poctivá páka je odměna, která přijde včas: karta souvislostí se odemyká na 14 záznamech a mluví se o ní hned v úvodu.</td></tr>
+        <tr><td><strong>Půjčí telefon</strong></td>
+          <td>Zámek (PIN nebo biometrika) a rozostření náhledu v přepínači aplikací.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="ramp-rule" aria-hidden="true">
+  <span style="background:var(--m-3)"></span><span style="background:var(--m-2)"></span>
+  <span style="background:var(--m-1)"></span><span style="background:var(--m0)"></span>
+  <span style="background:var(--m1)"></span><span style="background:var(--m2)"></span>
+  <span style="background:var(--m3)"></span>
+</div>
+
+<!-- ══════════════ 6. COLOUR ══════════════ -->
+<section id="colour" class="col">
+  <div class="sec-head"><h2>Barvy</h2><span class="tag">ověřeno, ne odhadnuto</span></div>
+  <p>
+    Základ je Dracula beze změn. Jeho neutrály jsou už samy laděné do fialové —
+    přesně to, co promyšlené tmavé téma potřebuje.
+  </p>
+
+  <div class="swatches">
+    <div class="sw"><div class="chip" style="background:#282A36"></div><div class="lab"><b>bg</b><span>#282A36</span></div></div>
+    <div class="sw"><div class="chip" style="background:#21222C"></div><div class="lab"><b>surface</b><span>#21222C</span></div></div>
+    <div class="sw"><div class="chip" style="background:#44475A"></div><div class="lab"><b>line</b><span>#44475A</span></div></div>
+    <div class="sw"><div class="chip" style="background:#6272A4"></div><div class="lab"><b>muted</b><span>#6272A4</span></div></div>
+    <div class="sw"><div class="chip" style="background:#F8F8F2"></div><div class="lab"><b>fg</b><span>#F8F8F2</span></div></div>
+    <div class="sw"><div class="chip" style="background:#BD93F9"></div><div class="lab"><b>purple</b><span>#BD93F9</span></div></div>
+    <div class="sw"><div class="chip" style="background:#FFB86C"></div><div class="lab"><b>orange</b><span>#FFB86C</span></div></div>
+    <div class="sw"><div class="chip" style="background:#8BE9FD"></div><div class="lab"><b>cyan</b><span>#8BE9FD</span></div></div>
+    <div class="sw"><div class="chip" style="background:#FF79C6"></div><div class="lab"><b>pink</b><span>#FF79C6</span></div></div>
+    <div class="sw"><div class="chip" style="background:#50FA7B"></div><div class="lab"><b>green</b><span>#50FA7B</span></div></div>
+  </div>
+
+  <h3>Škála nálady — divergentní, sedm stupňů</h3>
+  <div class="ramp-demo">
+    <div style="background:var(--m-3)"><b>−3</b><span>F44D4D</span></div>
+    <div style="background:var(--m-2)"><b>−2</b><span>EA726A</span></div>
+    <div style="background:var(--m-1)"><b>−1</b><span>D89388</span></div>
+    <div style="background:var(--m0)"><b>0</b><span>B1B1C1</span></div>
+    <div style="background:var(--m1)"><b>+1</b><span>95CFA0</span></div>
+    <div style="background:var(--m2)"><b>+2</b><span>7DE68F</span></div>
+    <div style="background:var(--m3)"><b>+3</b><span>63FB78</span></div>
+  </div>
+  <p class="ramp-caption">OKLCH L 0,655 → 0,877 · monotónně rostoucí · neutrální šedý střed</p>
+
+  <p>
+    Obvyklá škála v aplikacích na náladu jde červená → žlutá → zelená. Má
+    <em>barevný odstín</em> uprostřed a symetrickou světlost, takže −2 a +2 jsou při
+    deuteranopii k nerozeznání. Tahle škála místo toho stoupá ve světlosti
+    <strong>monotónně napříč všemi sedmi stupni</strong>: i když se červený a zelený pól
+    slijí do stejného kalného odstínu, řada pořád čitelně <em>směřuje</em>. Všech sedm
+    kroků má kontrast nad 3:1 vůči <code>#282A36</code>.
+  </p>
+
+  <div class="callout note">
+    <h4>Tvrdé pravidlo, které vypadlo z měření</h4>
+    <p>
+      <strong>Nálada se nikdy nekóduje jenom barvou.</strong> Sousední stupně téhle
+      škály se při simulované deuteranopii liší o ΔE ≈ 5 proti prahu 15. Žádná
+      sedmistupňová škála tím neprojde — v žádné paletě. Proto má každá plocha
+      druhé kódování: v kalendáři číslo dne, v grafu poloha na ose, v seznamu
+      vypsaná slovní kotva.
+    </p>
+    <p>
+      Hrubé čtení, kvůli kterému kalendář vlastně existuje — <em>„byl tenhle měsíc
+      spíš červený, nebo spíš zelený?“</em> — přežije i barvoslepost, protože se čte
+      spád, ne jednotlivý stupeň. Přesná hodnota patří do detailu dne.
+      Volba <code>Bezbariérový režim</code> přehodí póly na oranžová ↔ azurová.
+    </p>
+  </div>
+
+  <h3>Kategorie — štítky a faktory</h3>
+  <p>Pevné pořadí, nikdy se necykluje: <strong>fialová → oranžová → azurová → růžová → zelená</strong>.
+     Šestá a další kategorie spadne do <code>Ostatní</code> v barvě <code>#6272A4</code>.</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Kontrola</th><th class="num-col">Výsledek</th><th>Co z toho plyne</th></tr></thead>
+      <tbody>
+        <tr><td>Odlišení sousedů (deutan)</td><td class="num-col" style="color:var(--m2)">ΔE 12,1 ✓</td>
+            <td>Sloupcové a čárové grafy do 5 sérií jsou bezpečné.</td></tr>
+        <tr><td>Nejhorší pár, plné vidění</td><td class="num-col" style="color:var(--m2)">ΔE 21,4 ✓</td>
+            <td>Toto pořadí drží fialovou a růžovou od sebe — vedle sebe mají jen 13,1.</td></tr>
+        <tr><td>Kontrast vůči ploše</td><td class="num-col" style="color:var(--m2)">vše ≥ 3:1 ✓</td>
+            <td>Neupravené akcenty Dracula obstojí na <code>#282A36</code>.</td></tr>
+        <tr><td>Všechny dvojice (deutan)</td><td class="num-col" style="color:var(--m-3)">ΔE 3,3 ✗</td>
+            <td><strong>Žádné vícebarevné bodové grafy.</strong> Zelená a oranžová vedle sebe splynou.</td></tr>
+        <tr><td>Žlutá <code>#F1FA8C</code> vs zelená</td><td class="num-col" style="color:var(--m-3)">ΔE 3,1 ✗</td>
+            <td>Žlutá je vyřazená z dat. Zůstává jen jako stav „pozor“ s ikonou a popiskem.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Zkusil jsem odstíny Dracula přesadit dolů do světlostního pásma, které
+    validátor pro tmavý režim vyžaduje. Projde všemi kontrolami — a vyrobí kalnou
+    olivovou a petrolejovou, které téma zabijí. Zamítnuto: to pásmo existuje jako
+    záruka kontrastu vůči ploše, a neupravené akcenty ten kontrast splňují přímo.
+    Splnit podstatu je víc než splnit její náhradu.
+  </p>
+</section>
+
+<div class="ramp-rule" aria-hidden="true">
+  <span style="background:var(--m-3)"></span><span style="background:var(--m-2)"></span>
+  <span style="background:var(--m-1)"></span><span style="background:var(--m0)"></span>
+  <span style="background:var(--m1)"></span><span style="background:var(--m2)"></span>
+  <span style="background:var(--m3)"></span>
+</div>
+
+<!-- ══════════════ 7. TYPE & TOUCH ══════════════ -->
+<section id="type" class="col">
+  <div class="sec-head"><h2>Písmo, rozestupy, palec</h2></div>
+  <p>
+    Systémové písmo, žádné CDN — na telefonu se nic nestahuje a nic tiše nespadne
+    na náhradní řez. <code>Segoe UI / Roboto</code> pro rozhraní,
+    <code>Roboto Mono</code> pro čísla, skóre, data a osy. Číselné údaje mají
+    <code>tabular-nums</code>, aby kalendář a sloupce skóre nepoblikávaly při změně hodnot.
+  </p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Token</th><th class="num-col">Velikost</th><th>Použití</th></tr></thead>
+      <tbody>
+        <tr><td><code>display</code></td><td class="num-col">32 / 36</td><td>název obrazovky, hlavní skóre</td></tr>
+        <tr><td><code>title</code></td><td class="num-col">20 / 26</td><td>nadpis sekce, otázka</td></tr>
+        <tr><td><code>body</code></td><td class="num-col">16 / 24</td><td>výchozí — nikdy menší pro čtený text</td></tr>
+        <tr><td><code>label</code></td><td class="num-col">14 / 20</td><td>popisky polí, štítky</td></tr>
+        <tr><td><code>micro</code></td><td class="num-col">12 / 16</td><td>osy, časy, poznámky pod grafem</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout ok">
+    <h4>Dosah palce</h4>
+    <p>
+      A55 měří 161 mm na výšku — horní třetina je při držení jednou rukou mimo
+      dosah. Proto: <strong>všechny hlavní ovládací prvky v dolních 60 % obrazovky</strong>,
+      tlačítko Uložit ukotvené nad spodní navigací, nadpisy nahoře výhradně jako
+      popisky — nikdy ne jako tlačítka.
+    </p>
+    <p>
+      Nejtěsnější případ je řada sedmi tlačítek nálady: 393 px minus okraje minus
+      šest mezer dává <strong>47 px na terč</strong>. Těsně nad hranicí — a proto se nesmí
+      dál zmenšit ani přijít o vertikální odsazení.
+    </p>
+  </div>
+</section>
+
+<!-- ══════════════ 8. PLATFORM ══════════════ -->
+<section id="platform" class="col">
+  <div class="sec-head"><h2>Android 16 · One UI 8.5</h2></div>
+  <ul>
+    <li><code>viewport-fit=cover</code> a <code>env(safe-area-inset-bottom)</code> — spodní navigace musí minout gesto-lištu.</li>
+    <li><code>theme-color #282A36</code> obarví stavový řádek; <code>color-scheme: dark</code> zabrání tomu, aby Chrome ztmavoval už tmavé téma podruhé.</li>
+    <li>V manifestu <strong>maskable ikona 512</strong> — One UI si nakládá vlastní masku a nemaskovatelnou ikonu ořízne.</li>
+    <li>Zkratka v manifestu <code>Rychlý zápis</code> → dlouhý stisk ikony skočí rovnou na řadu nálady.</li>
+    <li><code>navigator.storage.persist()</code> při prvním uložení. Bez toho může systém data pod tlakem na úložiště <strong>smazat</strong>. Stav je vidět v Nastavení.</li>
+    <li><code>navigator.vibrate(10)</code> u každé volby na škále — levné, a řada sedmi tlačítek díky tomu působí jako fyzický ovladač.</li>
+    <li>Respektovat <code>prefers-reduced-motion</code> i uživatelské zvětšení písma: všude <code>rem</code>, nikde <code>maximum-scale</code>.</li>
+  </ul>
+
+  <div class="callout">
+    <h4>Připomenutí — poctivá pozice</h4>
+    <p>
+      <strong>PWA neumí na Androidu spolehlivě naplánovat lokální notifikaci.</strong>
+      Notification Triggers API se nikdy nevydalo, <code>periodicSync</code> je
+      heuristický a jen v Chromu, a service worker se sám na čas neprobudí. Cokoli
+      jiného znamená push server, tedy backend a trvalé síťové spojení.
+    </p>
+    <p>
+      Verze 1 proto neslibuje, co neumí splnit: úvodní průvodce projde založení
+      opakovaného <strong>budíku v Samsung Clock</strong> na zvolený čas. Je to neelegantní
+      a spustí se to se stoprocentní jistotou, které se tu žádné webové API
+      nepřiblíží. Zkratka v manifestu z toho dělá jeden tap. A když je včerejšek
+      nezapsaný, nabídne to <em>Dnes</em> samo při otevření.
+    </p>
+  </div>
+</section>
+
+<div class="ramp-rule" aria-hidden="true">
+  <span style="background:var(--m-3)"></span><span style="background:var(--m-2)"></span>
+  <span style="background:var(--m-1)"></span><span style="background:var(--m0)"></span>
+  <span style="background:var(--m1)"></span><span style="background:var(--m2)"></span>
+  <span style="background:var(--m3)"></span>
+</div>
+
+<!-- ══════════════ 9. BUILD ══════════════ -->
+<section id="build" class="col">
+  <div class="sec-head"><h2>Postup stavby</h2><span class="tag">šest fází</span></div>
+  <p>
+    Čisté HTML, CSS a JavaScript. Žádný framework, žádný build, žádné závislosti —
+    je to jednouživatelská aplikace o zhruba třech tisících řádcích a nástrojový
+    řetěz by stál víc, než přinese. Grafy jsou ručně kreslené SVG; každý z nich je
+    čára, sloupec nebo mřížka.
+  </p>
+  <div class="phases">
+    <div class="phase"><span class="n">1</span><div>
+      <h4>Kostra</h4><p>Tokeny, shell, záložky, IndexedDB, vrstva 0, instalace a offline.</p>
+      <span class="done">Hotovo, když jde na A55 v letadlovém režimu zapsat náladu, zavřít appku, otevřít a záznam tam pořád je.</span>
+    </div></div>
+    <div class="phase"><span class="n">2</span><div>
+      <h4>Plný zápis</h4><p>Vrstvy 1–2, štítky, spánek, detail dne, editace, doplňování zpět.</p>
+      <span class="done">Hotovo, když kompletní den zabere pod minutu.</span>
+    </div></div>
+    <div class="phase"><span class="n">3</span><div>
+      <h4>Vidět to</h4><p>Kalendářová mapa, trend nálady, rozdělení hodnot.</p>
+      <span class="done">Hotovo, když je měsíc čitelný na jeden pohled.</span>
+    </div></div>
+    <div class="phase"><span class="n">4</span><div>
+      <h4>Dotazníky</h4><p>PHQ-9, GAD-7, WHO-5, plánování, graf s pásmy závažnosti, bezpečnostní karta u položky 9.</p>
+      <span class="done">Hotovo, když se skóre vykresluje proti klinickým pásmům.</span>
+    </div></div>
+    <div class="phase"><span class="n">5</span><div>
+      <h4>Souvislosti</h4><p>Den v týdnu, spánek se zpožděním, asociace štítků, všechny prahy <code>n</code> a intervaly spolehlivosti.</p>
+      <span class="done">Hotovo, když se žádná statistika neobjeví dřív, než si ji data zaslouží.</span>
+    </div></div>
+    <div class="phase"><span class="n">6</span><div>
+      <h4>Důvěra</h4><p>Zámek, export a import, zpráva pro lékaře, výzva k záloze, režimy AMOLED a bezbariérový.</p>
+      <span class="done">Hotovo, když data můžou odejít a zase se beze ztráty vrátit.</span>
+    </div></div>
+  </div>
+  <p style="margin-top:1.5rem">
+    <strong>Fáze 1 je použitelná sama o sobě.</strong> Stojí za to ji dostat do telefonu
+    dřív, než začne fáze 2 — týden skutečných večerních zápisů přeuspořádá všechno,
+    co je pod ní.
+  </p>
+</section>
+
+<footer class="foot col">
+  Soumrak není zdravotnický prostředek. Nenahrazuje diagnózu ani péči odborníka.<br>
+  Linka první psychické pomoci 116 123 · Linka bezpečí 116 111 · Záchranná služba 155
+</footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ── shared demo series: 30 days, a dip and a recovery.
+        The four-day hole at 11–14 is deliberate: it is what dropping off
+        actually looks like, and it makes the rolling mean break rather
+        than quietly bridge the gap. ─────────────────────────────────── */
+  var MOOD = [0,1,-1,0,-2,-1,1,0,1,2,null,null,null,null,-3,-2,-2,-1,0,-1,null,1,1,2,1,2,3,2,1,-1];
+  var RETRO = {17:true, 18:true};
+  var TODAY = 30;
+
+  var RAMP = ["#F44D4D","#EA726A","#D89388","#B1B1C1","#95CFA0","#7DE68F","#63FB78"];
+  function moodColor(v){ return RAMP[v+3]; }
+
+  /* ── 1 · live mood + circumplex ──────────────────────────────── */
+  var moodrow = document.getElementById("moodrow");
+  var enrow   = document.getElementById("enrow");
+  var savebtn = document.getElementById("savebtn");
+  var qtitle  = document.getElementById("qtitle");
+  var qsub    = document.getElementById("qsub");
+  var qdot    = document.getElementById("qdot");
+  var state   = { mood:null, energy:null };
+
+  var QUAD = {
+    "hi-hi":["Elán, nadšení","vysoká valence · vysoká aktivace"],
+    "hi-lo":["Klid, spokojenost","vysoká valence · nízká aktivace"],
+    "lo-hi":["Napětí, úzkost","nízká valence · vysoká aktivace"],
+    "lo-lo":["Útlum, skleslost","nízká valence · nízká aktivace"],
+    "mid"  :["Neutrální den","střed obou os"]
+  };
+
+  function render(){
+    if(state.mood === null){
+      savebtn.disabled = true; savebtn.textContent = "Vyber náladu";
+    }else{
+      savebtn.disabled = false; savebtn.textContent = "Uložit den";
+    }
+    var key;
+    if(state.mood === null){
+      qtitle.textContent = "Zatím nevybráno";
+      qsub.textContent = "valence × aktivace";
+      qdot.style.background = "#6272A4";
+      return;
+    }
+    if(state.energy === null){
+      qtitle.textContent = state.mood > 0 ? "Dobrý den" : state.mood < 0 ? "Slabší den" : "Neutrální den";
+      qsub.textContent = "doplň energii pro kvadrant";
+      qdot.style.background = moodColor(state.mood);
+      return;
+    }
+    if(state.mood === 0 || state.energy === 3){ key = "mid"; }
+    else{ key = (state.mood > 0 ? "hi" : "lo") + "-" + (state.energy > 3 ? "hi" : "lo"); }
+    qtitle.textContent = QUAD[key][0];
+    qsub.textContent   = QUAD[key][1];
+    qdot.style.background = moodColor(state.mood);
+  }
+
+  if(moodrow){
+    moodrow.addEventListener("click", function(e){
+      var b = e.target.closest(".mood"); if(!b) return;
+      state.mood = parseInt(b.dataset.m, 10);
+      Array.prototype.forEach.call(moodrow.children, function(el){
+        var on = el === b;
+        el.setAttribute("aria-pressed", on ? "true" : "false");
+        el.classList.toggle("off", !on);
+        el.dataset.v = on ? el.dataset.m : "";
+      });
+      if(navigator.vibrate) navigator.vibrate(8);
+      render();
+    });
+  }
+  if(enrow){
+    enrow.addEventListener("click", function(e){
+      var b = e.target.closest("button"); if(!b) return;
+      state.energy = Array.prototype.indexOf.call(enrow.children, b) + 1;
+      Array.prototype.forEach.call(enrow.children, function(el){ el.classList.toggle("on", el === b); });
+      if(navigator.vibrate) navigator.vibrate(8);
+      render();
+    });
+  }
+  render();
+
+  /* ── 3 · calendar — July 2026 starts on Wednesday ────────────── */
+  var cal = document.getElementById("calgrid");
+  if(cal){
+    var html = "";
+    var lead = 2; /* Mon, Tue empty */
+    for(var i=0;i<lead;i++) html += '<div class="cal empty"></div>';
+    for(var d=1; d<=31; d++){
+      if(d > TODAY){                       /* future — not a missed day */
+        html += '<div class="cal future">'+d+'</div>';
+      }else if(MOOD[d-1] === null || MOOD[d-1] === undefined){
+        html += '<div class="cal none">'+d+'</div>';
+      }else{
+        var cls = "cal" + (RETRO[d] ? " retro" : "") + (d===TODAY ? " today" : "");
+        html += '<div class="'+cls+'" style="background:'+moodColor(MOOD[d-1])+'">'+d+'</div>';
+      }
+    }
+    cal.innerHTML = html;
+  }
+
+  /* ── 4 · trend chart ─────────────────────────────────────────── */
+  function rolling(arr, win){
+    var out = [];
+    for(var i=0;i<arr.length;i++){
+      var lo = Math.max(0, i-Math.floor(win/2)), hi = Math.min(arr.length-1, i+Math.floor(win/2));
+      var s=0,n=0;
+      for(var j=lo;j<=hi;j++){ if(arr[j]!==null && arr[j]!==undefined){ s+=arr[j]; n++; } }
+      out.push(n >= 4 ? s/n : null);   /* needs 4 of 7 — otherwise the segment breaks */
+    }
+    return out;
+  }
+
+  var trend = document.getElementById("trend");
+  if(trend){
+    var W=344,H=108, PL=18, PR=6, PT=8, PB=16;
+    var x = function(i){ return PL + i*(W-PL-PR)/(MOOD.length-1); };
+    var y = function(v){ return PT + (3-v)*(H-PT-PB)/6; };
+    var s = "";
+
+    /* recessive grid + the only two labelled ticks that matter */
+    [3,0,-3].forEach(function(v){
+      s += '<line x1="'+PL+'" y1="'+y(v)+'" x2="'+(W-PR)+'" y2="'+y(v)+'" stroke="#44475A" stroke-width="1" opacity="'+(v===0?0.85:0.4)+'"/>';
+      s += '<text x="0" y="'+(y(v)+3.5)+'" fill="#6272A4" font-size="9" font-family="Roboto Mono,monospace">'+(v>0?"+"+v:v)+'</text>';
+    });
+
+    /* daily values — thin, recessive, coloured by the ramp */
+    MOOD.forEach(function(v,i){
+      if(v===null) return;
+      s += '<circle cx="'+x(i).toFixed(1)+'" cy="'+y(v).toFixed(1)+'" r="2" fill="'+moodColor(v)+'" opacity="0.75"/>';
+    });
+
+    /* rolling mean — broken across gaps, never interpolated */
+    var roll = rolling(MOOD,7), seg = [];
+    function flush(){
+      if(seg.length > 1){
+        s += '<path d="M'+seg.map(function(p){return p[0].toFixed(1)+","+p[1].toFixed(1);}).join("L")+
+             '" fill="none" stroke="#BD93F9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+      }
+      seg = [];
+    }
+    roll.forEach(function(v,i){ if(v===null){ flush(); } else { seg.push([x(i), y(v)]); } });
+    flush();
+
+    /* emphasised endpoint */
+    var last = roll.length-1;
+    while(last >= 0 && roll[last]===null) last--;
+    if(last >= 0){
+      s += '<circle cx="'+x(last).toFixed(1)+'" cy="'+y(roll[last]).toFixed(1)+'" r="4.5" fill="#BD93F9" stroke="#21222C" stroke-width="2"/>';
+    }
+    s += '<text x="'+PL+'" y="'+(H-3)+'" fill="#6272A4" font-size="9" font-family="Roboto Mono,monospace">1. 7.</text>';
+    s += '<text x="'+(W-PR)+'" y="'+(H-3)+'" fill="#6272A4" font-size="9" font-family="Roboto Mono,monospace" text-anchor="end">30. 7.</text>';
+    trend.innerHTML = s;
+  }
+
+  /* ── 4b · weekday bars with 95% CI ───────────────────────────── */
+  var wd = document.getElementById("weekday");
+  if(wd){
+    var days = ["po","út","st","čt","pá","so","ne"];
+    var mean = [-0.9,-0.2,0.1,0.4,0.9,1.1,-0.4];
+    var ci   = [0.5,0.6,0.5,0.6,0.5,0.4,0.7];
+    var W2=344,H2=86, PB2=16, PT2=6;
+    var y0 = PT2 + (H2-PT2-PB2)/2;            /* zero line */
+    var k  = (H2-PT2-PB2)/2 / 2.2;            /* px per mood point */
+    var bw = 30, gap = (W2 - days.length*bw)/(days.length+1);
+    var s2 = '<line x1="0" y1="'+y0+'" x2="'+W2+'" y2="'+y0+'" stroke="#44475A" stroke-width="1"/>';
+    days.forEach(function(d,i){
+      var cx = gap + i*(bw+gap) + bw/2;
+      var v = mean[i], h = Math.abs(v)*k;
+      var top = v >= 0 ? y0-h : y0;
+      /* 4px rounded data-end anchored to the baseline */
+      s2 += '<rect x="'+(cx-bw/2)+'" y="'+top+'" width="'+bw+'" height="'+Math.max(h,1.5)+'" rx="4" fill="'+
+            moodColor(Math.max(-3,Math.min(3,Math.round(v))))+'" opacity="0.9"/>';
+      var a = y0 - (v+ci[i])*k, b = y0 - (v-ci[i])*k;
+      s2 += '<line x1="'+cx+'" y1="'+a+'" x2="'+cx+'" y2="'+b+'" stroke="#F8F8F2" stroke-width="1.5" opacity="0.62"/>';
+      s2 += '<line x1="'+(cx-4)+'" y1="'+a+'" x2="'+(cx+4)+'" y2="'+a+'" stroke="#F8F8F2" stroke-width="1.5" opacity="0.62"/>';
+      s2 += '<line x1="'+(cx-4)+'" y1="'+b+'" x2="'+(cx+4)+'" y2="'+b+'" stroke="#F8F8F2" stroke-width="1.5" opacity="0.62"/>';
+      s2 += '<text x="'+cx+'" y="'+(H2-3)+'" fill="#6272A4" font-size="9.5" text-anchor="middle" font-family="Roboto Mono,monospace">'+d+'</text>';
+    });
+    wd.innerHTML = s2;
+  }
+
+  /* ── 6 · seven-day sparkline ─────────────────────────────────── */
+  var sp = document.getElementById("spark");
+  if(sp){
+    var week = MOOD.slice(23);   /* last 7 days */
+    var W3=312,H3=54,P3=6;
+    var x3 = function(i){ return P3 + i*(W3-2*P3)/(week.length-1); };
+    var y3 = function(v){ return P3 + (3-v)*(H3-2*P3)/6; };
+    var s3 = '<line x1="'+P3+'" y1="'+y3(0)+'" x2="'+(W3-P3)+'" y2="'+y3(0)+'" stroke="#44475A" stroke-width="1" opacity="0.6"/>';
+    var pts = week.map(function(v,i){ return v===null?null:[x3(i),y3(v)]; }).filter(Boolean);
+    s3 += '<path d="M'+pts.map(function(p){return p[0].toFixed(1)+","+p[1].toFixed(1);}).join("L")+
+          '" fill="none" stroke="#BD93F9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+    week.forEach(function(v,i){
+      if(v===null) return;
+      var r = i===week.length-1 ? 4 : 2.6;
+      s3 += '<circle cx="'+x3(i).toFixed(1)+'" cy="'+y3(v).toFixed(1)+'" r="'+r+'" fill="'+moodColor(v)+
+            '" stroke="#21222C" stroke-width="'+(i===week.length-1?2:0)+'"/>';
+    });
+    sp.innerHTML = s3;
+  }
+})();
+</script>

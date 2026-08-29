@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#282A36">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Soukromý deník nálady. Vše zůstává v telefonu.">
+<title>Soumrak</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div id="app" hidden>
+
+  <!-- ══════════ DNES ══════════ -->
+  <section class="screen" id="screen-today" data-screen="today">
+    <header class="head">
+      <div class="head-row">
+        <div>
+          <h1 id="today-title">Dnes</h1>
+          <p class="head-date" id="today-date"></p>
+        </div>
+        <span class="pill" id="today-count"></span>
+      </div>
+    </header>
+
+    <div class="body" id="today-body"></div>
+
+    <div class="savebar" id="today-savebar" hidden>
+      <button class="btn-save" id="btn-save" disabled>Vyber náladu</button>
+    </div>
+  </section>
+
+  <!-- ══════════ KALENDÁŘ ══════════ -->
+  <section class="screen" id="screen-calendar" data-screen="calendar" hidden>
+    <header class="head">
+      <div class="head-row">
+        <div>
+          <h1 id="cal-title">—</h1>
+          <p class="head-date" id="cal-sub"></p>
+        </div>
+        <span class="monthnav">
+          <button class="iconbtn" id="cal-prev" aria-label="Předchozí měsíc">‹</button>
+          <button class="iconbtn" id="cal-next" aria-label="Následující měsíc">›</button>
+        </span>
+      </div>
+    </header>
+    <div class="body" id="calendar-body"></div>
+  </section>
+
+  <!-- ══════════ PŘEHLED ══════════ -->
+  <section class="screen" id="screen-insights" data-screen="insights" hidden>
+    <header class="head">
+      <div class="head-row"><div>
+        <h1>Přehled</h1>
+        <p class="head-date" id="insights-range">30 dní</p>
+      </div></div>
+    </header>
+    <div class="body" id="insights-body"></div>
+  </section>
+
+  <!-- ══════════ DETAIL DNE ══════════ -->
+  <section class="screen" id="screen-day" data-screen="day" hidden>
+    <header class="head">
+      <div class="head-row">
+        <div>
+          <h1 id="day-title">Den</h1>
+          <p class="head-date" id="day-date"></p>
+        </div>
+        <button class="iconbtn" id="day-back" aria-label="Zpět na kalendář">‹</button>
+      </div>
+    </header>
+    <div class="body" id="day-body"></div>
+  </section>
+
+  <!-- ══════════ VÍCE ══════════ -->
+  <section class="screen" id="screen-more" data-screen="more" hidden>
+    <header class="head">
+      <div class="head-row"><div>
+        <h1>Více</h1>
+        <p class="head-date">nastavení a data</p>
+      </div></div>
+    </header>
+    <div class="body" id="more-body"></div>
+  </section>
+
+  <!-- ══════════ NAVIGACE ══════════ -->
+  <nav class="tabbar" id="tabbar">
+    <button data-go="today" class="on" aria-current="page">
+      <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></svg></span>
+      <span class="lb">Dnes</span>
+    </button>
+    <button data-go="calendar">
+      <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4" stroke-linecap="round"/></svg></span>
+      <span class="lb">Kalendář</span>
+    </button>
+    <button data-go="insights">
+      <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l5-6 4 3 6.5-8"/><path d="M4 21h16"/></svg></span>
+      <span class="lb">Přehled</span>
+    </button>
+    <button data-go="more">
+      <span class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span>
+      <span class="lb">Více</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- první spuštění -->
+<div id="boot" class="boot"><div class="boot-moon"></div></div>
+
+<!-- oznámení pro čtečky obrazovky -->
+<p id="live" class="sr" role="status" aria-live="polite"></p>
+
+<script type="module" src="js/ui.js"></script>
+</body>
+</html>

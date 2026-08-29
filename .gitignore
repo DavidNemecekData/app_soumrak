@@ -1,0 +1,11 @@
+# Lokální nastavení Claude Code — obsahuje cesty z tvého disku, do repozitáře nepatří
+.claude/settings.local.json
+
+# Systémové smetí Windows / macOS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Kdyby někdy přibyly závislosti nebo build
+node_modules/
+dist/
