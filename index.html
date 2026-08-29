@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<title>Soumrak</title>
+<!-- Rozcestník: samotná aplikace žije v podsložce soumrak/.
+     Tenhle soubor existuje jen proto, aby kořen adresy neskončil na 404. -->
+<link rel="canonical" href="./soumrak/">
+<meta name="robots" content="noindex">
+<!-- Záloha pro případ vypnutého JavaScriptu; jinak přesměruje skript níž. -->
+<meta http-equiv="refresh" content="0; url=./soumrak/">
+<script>
+  // replace() nenechává rozcestník v historii prohlížeče — tlačítko Zpět
+  // se pak nezacyklí. search a hash se přenášejí kvůli zkratce ?action=quick.
+  location.replace('./soumrak/' + location.search + location.hash);
+</script>
+<style>
+  body { background:#282A36; color:#F8F8F2; font:16px/1.5 system-ui, sans-serif;
+         display:grid; place-items:center; min-height:100vh; margin:0; }
+  a { color:#BD93F9; }
+</style>
+</head>
+<body>
+  <p>Pokračuj do <a href="./soumrak/">aplikace Soumrak</a>.</p>
+</body>
+</html>
