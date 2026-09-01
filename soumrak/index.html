@@ -14,6 +14,9 @@
 </head>
 <body>
 
+<!-- úvod při prvním spuštění -->
+<div id="onboarding" class="onb" hidden></div>
+
 <div id="app" hidden>
 
   <!-- ══════════ DNES ══════════ -->
@@ -71,10 +74,75 @@
           <h1 id="day-title">Den</h1>
           <p class="head-date" id="day-date"></p>
         </div>
-        <button class="iconbtn" id="day-back" aria-label="Zpět na kalendář">‹</button>
+        <button class="iconbtn" data-back aria-label="Zpět">‹</button>
       </div>
     </header>
     <div class="body" id="day-body"></div>
+  </section>
+
+  <!-- ══════════ DOTAZNÍKY ══════════ -->
+  <section class="screen" id="screen-instruments" data-screen="instruments" hidden>
+    <header class="head">
+      <div class="head-row">
+        <div>
+          <h1>Dotazníky</h1>
+          <p class="head-date">ověřené škály, ne diagnóza</p>
+        </div>
+        <button class="iconbtn" data-back aria-label="Zpět">‹</button>
+      </div>
+    </header>
+    <div class="body" id="instruments-body"></div>
+  </section>
+
+  <!-- ══════════ VYPLŇOVÁNÍ DOTAZNÍKU ══════════ -->
+  <section class="screen" id="screen-quiz" data-screen="quiz" hidden>
+    <header class="head">
+      <div class="head-row">
+        <div>
+          <h1 id="quiz-title">—</h1>
+          <p class="head-date" id="quiz-sub"></p>
+        </div>
+        <button class="iconbtn" data-back aria-label="Zpět">‹</button>
+      </div>
+    </header>
+    <div class="body" id="quiz-body"></div>
+    <div class="savebar" id="quiz-savebar" hidden>
+      <button class="btn-save" id="quiz-next" disabled>Další</button>
+    </div>
+  </section>
+
+  <!-- ══════════ ZÁZNAMY MYŠLENEK ══════════ -->
+  <section class="screen" id="screen-thoughts" data-screen="thoughts" hidden>
+    <header class="head">
+      <div class="head-row">
+        <div>
+          <h1>Záznam myšlenky</h1>
+          <p class="head-date">přerámování, krok za krokem</p>
+        </div>
+        <button class="iconbtn" data-back aria-label="Zpět">‹</button>
+      </div>
+    </header>
+    <div class="body" id="thoughts-body"></div>
+  </section>
+
+  <!-- ══════════ JEDEN ZÁZNAM MYŠLENKY ══════════ -->
+  <section class="screen" id="screen-thought" data-screen="thought" hidden>
+    <header class="head">
+      <div class="head-row">
+        <div>
+          <h1 id="thought-title">Záznam</h1>
+          <p class="head-date" id="thought-sub"></p>
+        </div>
+        <button class="iconbtn" data-back aria-label="Zpět">‹</button>
+      </div>
+    </header>
+    <div class="body" id="thought-body"></div>
+    <div class="savebar" id="thought-savebar" hidden>
+      <div class="btn-row">
+        <button class="btn-save secondary" id="thought-prev">Zpět</button>
+        <button class="btn-save" id="thought-next">Dál</button>
+      </div>
+    </div>
   </section>
 
   <!-- ══════════ VÍCE ══════════ -->
@@ -82,7 +150,7 @@
     <header class="head">
       <div class="head-row"><div>
         <h1>Více</h1>
-        <p class="head-date">nastavení a data</p>
+        <p class="head-date">dotazníky, nastavení a data</p>
       </div></div>
     </header>
     <div class="body" id="more-body"></div>

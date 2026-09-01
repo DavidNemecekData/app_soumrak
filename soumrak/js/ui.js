@@ -1,12 +1,20 @@
 /* Obrazovky, směrování a vykreslování. Bez frameworku — je to
-   jednouživatelská aplikace a stav se vejde do jednoho objektu. */
+   jednouživatelská aplikace a stav se vejde do jednoho objektu.
+
+   Jedno pravidlo platí v celém souboru bez výjimky: text, který mohl
+   napsat uživatel — vlastní štítek, poznámka, záznam myšlenky — projde
+   přes M.esc(). Obrazovky se skládají přes innerHTML a jediná ostrá
+   závorka ve štítku by jinak rozbila celou kartu. */
 
 import * as db from './db.js';
 import * as M from './model.js';
+import * as INS from './instruments.js';
+import * as TH from './thoughts.js';
 import { mean, rollingMean, segments, seriesFor, distribution, buckets } from './stats.js';
 import {
-  T, MOOD_ANCHORS, MOOD_PHRASE, ENERGY_ENDS, ANXIETY_ENDS, SLEEPQ_ENDS,
-  DEFAULT_TAGS, WEEKDAYS_SHORT, MONTHS_NOM
+  T, MOOD_ANCHORS, MOOD_PHRASE, ENERGY_ANCHORS, ANXIETY_ANCHORS, SLEEPQ_ANCHORS,
+  DEFAULT_TAGS, WEEKDAYS_SHORT, MONTHS_NOM, EMOTIONS, EMOTION_GROUPS, STRATEGIES,
+  gender, hyphenate
 } from './strings.cs.js';
 
 /* ── stav ────────────────────────────────────────────────────── */
@@ -18,6 +26,7 @@ const state = {
   yesterday: null,
   editing: false,                // vynucený formulář i u platného záznamu
   showTier2: false,              // rozbalená volitelná část zápisu
+  showEmotions: false,           // rozbalený slovník emocí
   calMonth: null,                // {y, m} zobrazený měsíc
   dayView: null,                 // záznam otevřený v detailu dne
   dayViewKey: null,
@@ -27,12 +36,26 @@ const state = {
   persisted: false,
   range: 30,                     // 30 | 90 | 365 dní v Přehledu
   readout: null,                 // index bodu vybraného ťuknutím do grafu
-  tables: {}                     // které grafy mají rozbalenou tabulku
+  tables: {},                    // které grafy mají rozbalenou tabulku
+  address: 'neutral',            // rod v dotazníku WHO-5
+  amoled: false,
+
+  quiz: null,                    // {instrument, index, items, result}
+  instrumentView: null,          // rozbalená historie jednoho dotazníku
+  thoughts: [],                  // seznam záznamů myšlenek
+  thought: null,                 // rozepsaný nebo otevřený záznam
+  thoughtStep: 0,
+  thoughtMode: 'view',
+  onbStep: 0
 };
 
 /* ── drobné pomůcky ──────────────────────────────────────────── */
 
 const $ = (sel) => document.querySelector(sel);
+const esc = M.esc;
+
+/** Rod podle nastavení. Používá se všude, kde text nese značku {m|f}. */
+const g = (text) => gender(text, state.address);
 
 function haptic(ms = 8) {
   if (navigator.vibrate) { try { navigator.vibrate(ms); } catch { /* nevadí */ } }
@@ -52,11 +75,39 @@ function toast(msg) {
   el.textContent = msg;
   document.body.appendChild(el);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.remove(), 2200);
+  toastTimer = setTimeout(() => el.remove(), 2600);
   announce(msg);
 }
 
-/* ── graf ────────────────────────────────────────────────────── */
+/** Položky nabízené k výběru — archivované zůstávají jen pro čtení historie. */
+const active = (list) => list.filter((x) => !x.archived);
+
+function labelsFor(ids, list) {
+  return ids.map((id) => {
+    const found = list.find((x) => x.id === id);
+    return found ? found.label : id;   // odebraný štítek zůstává v historii pod id
+  });
+}
+
+const emotionLabel = (id) => (EMOTIONS.find((e) => e.id === id) || { label: id }).label;
+const strategyById = (id) => STRATEGIES.find((s) => s.id === id) || { id, label: id };
+
+/**
+ * Doplní graf do místa, které je pro něj v kartě připravené, a předá mu
+ * skutečnou naměřenou šířku. Grafy se proto kreslí 1:1 — dřív měly pevný
+ * viewBox 344 px, prohlížeč je zmenšil na šířku displeje a s nimi i popisky
+ * os, z 9 px na 8. Tohle je jediný důvod, proč se vykresluje na dvě fáze.
+ */
+function fillChart(slotId, build) {
+  const slot = document.getElementById(slotId);
+  if (!slot) return;
+  const w = Math.max(240, Math.round(slot.clientWidth));
+  slot.innerHTML = build(w);
+}
+
+/* ── grafy ───────────────────────────────────────────────────── */
+
+const AXIS_FONT = 12;   /* spodní hranice čitelnosti, viz app.css */
 
 /**
  * Připraví body grafu podle délky období. Rok po dnech je na telefonu kaše
@@ -67,7 +118,9 @@ function buildSeries(values, keys, range) {
   if (range <= 90) {
     return {
       mode: 'daily',
-      marks: values.map((v, i) => ({ value: v, key: keys[i], label: M.formatShort(keys[i]), n: v === null ? 0 : 1 })),
+      marks: values.map((v, i) => ({
+        value: v, key: keys[i], label: M.formatShort(keys[i]), n: v === null ? 0 : 1
+      })),
       roll: rollingMean(values, 7, 4),
       note: T.chartDaily
     };
@@ -95,52 +148,51 @@ function trendChart(series, w, h, selected) {
   const marks = series.marks;
   const n = marks.length;
   if (!n) return '';
-  const PL = 16, PR = 6, PT = 8, PB = 15;
+  const PL = 22, PR = 8, PT = 10, PB = 20;
   const x = (i) => PL + (n === 1 ? (w - PL - PR) / 2 : (i * (w - PL - PR)) / (n - 1));
   const y = (v) => PT + ((3 - v) * (h - PT - PB)) / 6;
 
   let s = '';
-  for (const g of [3, 0, -3]) {
-    s += `<line x1="${PL}" y1="${y(g).toFixed(1)}" x2="${w - PR}" y2="${y(g).toFixed(1)}" `
-      +  `stroke="#44475A" stroke-width="1" opacity="${g === 0 ? 0.85 : 0.4}"/>`
-      +  `<text x="0" y="${(y(g) + 3.5).toFixed(1)}" fill="#6272A4" font-size="9" `
-      +  `font-family="Roboto Mono,monospace">${g > 0 ? '+' + g : g}</text>`;
+  for (const gv of [3, 0, -3]) {
+    s += `<line x1="${PL}" y1="${y(gv).toFixed(1)}" x2="${w - PR}" y2="${y(gv).toFixed(1)}" `
+      + `stroke="#44475A" stroke-width="1" opacity="${gv === 0 ? 0.85 : 0.45}"/>`
+      + `<text x="0" y="${(y(gv) + 4).toFixed(1)}" fill="#A2A9CC" font-size="${AXIS_FONT}">`
+      + `${gv > 0 ? '+' + gv : gv}</text>`;
   }
 
-  const r = series.mode === 'daily' ? (n > 45 ? 1.6 : 2) : 2.6;
+  const r = series.mode === 'daily' ? (n > 45 ? 1.8 : 2.4) : 3;
   marks.forEach((m, i) => {
     if (m.value === null) return;
     s += `<circle cx="${x(i).toFixed(1)}" cy="${y(m.value).toFixed(1)}" r="${r}" `
-      +  `fill="${M.moodColor(Math.round(m.value))}" opacity="0.75"/>`;
+      + `fill="${M.moodColor(Math.round(m.value))}" opacity="0.8"/>`;
   });
 
   const pts = series.roll.map((v, i) => (v === null ? null : [x(i), y(v)]));
   for (const seg of segments(pts)) {
     if (seg.length < 2) continue;
     s += `<path d="M${seg.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('L')}" `
-      +  `fill="none" stroke="#BD93F9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+      + `fill="none" stroke="#BD93F9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
 
   let last = series.roll.length - 1;
   while (last >= 0 && series.roll[last] === null) last--;
   if (last >= 0) {
     s += `<circle cx="${x(last).toFixed(1)}" cy="${y(series.roll[last]).toFixed(1)}" r="4.5" `
-      +  `fill="#BD93F9" stroke="#21222C" stroke-width="2"/>`;
+      + `fill="#BD93F9" stroke="#21222C" stroke-width="2"/>`;
   }
 
-  // zvýraznění vybraného bodu
   if (selected !== null && marks[selected] && marks[selected].value !== null) {
     const cx = x(selected), cy = y(marks[selected].value);
     s += `<line x1="${cx.toFixed(1)}" y1="${PT}" x2="${cx.toFixed(1)}" y2="${h - PB}" `
-      +  `stroke="#F8F8F2" stroke-width="1" opacity="0.35"/>`
-      +  `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5" `
-      +  `fill="${M.moodColor(Math.round(marks[selected].value))}" stroke="#21222C" stroke-width="2"/>`;
+      + `stroke="#F8F8F2" stroke-width="1" opacity="0.4"/>`
+      + `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="5.5" `
+      + `fill="${M.moodColor(Math.round(marks[selected].value))}" stroke="#21222C" stroke-width="2"/>`;
   }
 
-  s += `<text x="${PL}" y="${h - 2}" fill="#6272A4" font-size="9" `
-    +  `font-family="Roboto Mono,monospace">${marks[0].label.split('–')[0]}</text>`
-    +  `<text x="${w - PR}" y="${h - 2}" fill="#6272A4" font-size="9" text-anchor="end" `
-    +  `font-family="Roboto Mono,monospace">${marks[n - 1].label.split('–').pop()}</text>`;
+  s += `<text x="${PL}" y="${h - 4}" fill="#A2A9CC" font-size="${AXIS_FONT}">`
+    + `${esc(marks[0].label.split('–')[0])}</text>`
+    + `<text x="${w - PR}" y="${h - 4}" fill="#A2A9CC" font-size="${AXIS_FONT}" text-anchor="end">`
+    + `${esc(marks[n - 1].label.split('–').pop())}</text>`;
 
   // terče na ťuknutí — vždy aspoň 8 px široké, i když je bodů hodně
   const step = n > 1 ? (w - PL - PR) / (n - 1) : w;
@@ -150,21 +202,102 @@ function trendChart(series, w, h, selected) {
     // fill="none" + pointer-events="all" je jednoznačné napříč prohlížeči;
     // u fill="transparent" závisí zásah na výkladu visiblePainted.
     s += `<rect x="${(x(i) - tw / 2).toFixed(1)}" y="0" width="${tw.toFixed(1)}" height="${h}" `
-      +  `fill="none" pointer-events="all" data-i="${i}" class="hit"/>`;
+      + `fill="none" pointer-events="all" data-i="${i}" class="hit"/>`;
   });
 
-  return `<svg class="chart" viewBox="0 0 ${w} ${h}" data-chart="trend"
-      role="img" aria-label="Průběh nálady">${s}</svg>`;
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"
+      data-chart="trend" role="img" aria-label="Průběh nálady">${s}</svg>`;
+}
+
+/** Malý sedmidenní přehled bez os. */
+function sparkline(values, w, h = 56) {
+  const n = values.length;
+  const P = 8;
+  const x = (i) => P + (n === 1 ? (w - 2 * P) / 2 : (i * (w - 2 * P)) / (n - 1));
+  const y = (v) => P + ((3 - v) * (h - 2 * P)) / 6;
+  let s = `<line x1="${P}" y1="${y(0)}" x2="${w - P}" y2="${y(0)}" stroke="#44475A" stroke-width="1" opacity="0.6"/>`;
+  const pts = values.map((v, i) => (v === null ? null : [x(i), y(v)]));
+  for (const seg of segments(pts)) {
+    if (seg.length < 2) continue;
+    s += `<path d="M${seg.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('L')}" `
+      + `fill="none" stroke="#BD93F9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
+  values.forEach((v, i) => {
+    if (v === null) return;
+    const lastOne = i === n - 1;
+    s += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${lastOne ? 4.5 : 3}" `
+      + `fill="${M.moodColor(v)}" stroke="#21222C" stroke-width="${lastOne ? 2 : 0}"/>`;
+  });
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"
+      role="img" aria-label="Posledních sedm dní">${s}</svg>`;
 }
 
 /**
- * Rozložení hodnot — vodorovné sloupce, nejlepší nahoře, aby směr
- * odpovídal svislé ose trendu. Počet je vypsaný u každého sloupce,
- * takže barva nikdy nenese hodnotu sama.
+ * Historie dotazníku: stupňovitá čára nad pruhy závažnosti. Pásma jsou
+ * měřítko, ne ozdoba — bez nich je číslo 12 samo o sobě nic.
  */
+function bandChart(instrument, list, w, h = 150) {
+  const def = INS.INSTRUMENTS[instrument];
+  const PL = 30, PR = 8, PT = 10, PB = 22;
+  const maxV = def.displayMax;
+  const y = (v) => PT + ((maxV - v) * (h - PT - PB)) / maxV;
+  const n = list.length;
+  const x = (i) => PL + (n === 1 ? (w - PL - PR) / 2 : (i * (w - PL - PR)) / (n - 1));
+
+  const TONE = { good: '#50FA7B', warning: '#F1FA8C', serious: '#FFB86C', critical: '#FF5555' };
+
+  let s = '';
+  let lo = 0;
+  for (const b of def.bands) {
+    const top = y(b.max), bot = y(lo);
+    s += `<rect x="${PL}" y="${top.toFixed(1)}" width="${(w - PL - PR).toFixed(1)}" `
+      + `height="${Math.max(0, bot - top).toFixed(1)}" fill="${TONE[b.tone]}" opacity="0.10"/>`
+      + `<line x1="${PL}" y1="${top.toFixed(1)}" x2="${w - PR}" y2="${top.toFixed(1)}" `
+      + `stroke="${TONE[b.tone]}" stroke-width="1" opacity="0.35"/>`;
+    lo = b.max;
+  }
+
+  s += `<text x="0" y="${(y(maxV) + 4).toFixed(1)}" fill="#A2A9CC" font-size="${AXIS_FONT}">${maxV}</text>`
+    + `<text x="0" y="${(y(0) + 4).toFixed(1)}" fill="#A2A9CC" font-size="${AXIS_FONT}">0</text>`;
+
+  if (n) {
+    // Stupňovitá čára: mezi dvěma vyplněními se nic neměřilo, takže se
+    // hodnota drží a pak skočí. Šikmá spojnice by předstírala plynulý vývoj.
+    let d = '';
+    list.forEach((a, i) => {
+      const px = x(i), py = y(a.total);
+      if (i === 0) { d += `M${px.toFixed(1)},${py.toFixed(1)}`; return; }
+      const prev = y(list[i - 1].total);
+      d += `L${px.toFixed(1)},${prev.toFixed(1)}L${px.toFixed(1)},${py.toFixed(1)}`;
+    });
+    if (n > 1) {
+      s += `<path d="${d}" fill="none" stroke="#BD93F9" stroke-width="2" `
+        + `stroke-linecap="round" stroke-linejoin="round"/>`;
+    }
+    list.forEach((a, i) => {
+      const tone = TONE[INS.bandFor(instrument, a.total).tone];
+      s += `<circle cx="${x(i).toFixed(1)}" cy="${y(a.total).toFixed(1)}" r="4" `
+        + `fill="${tone}" stroke="#21222C" stroke-width="2"/>`;
+    });
+    s += `<text x="${PL}" y="${h - 4}" fill="#A2A9CC" font-size="${AXIS_FONT}">`
+      + `${esc(M.formatShort(dayOf(list[0])))}</text>`;
+    if (n > 1) {
+      s += `<text x="${w - PR}" y="${h - 4}" fill="#A2A9CC" font-size="${AXIS_FONT}" text-anchor="end">`
+        + `${esc(M.formatShort(dayOf(list[n - 1])))}</text>`;
+    }
+  }
+
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"
+      role="img" aria-label="Historie dotazníku ${esc(def.name)}">${s}</svg>`;
+}
+
+const dayOf = (a) => a.day || M.dateKey(new Date(a.takenAt));
+
+/* ── tabulky pod grafy ───────────────────────────────────────── */
+
 function distributionHTML(counts) {
   const total = counts.reduce((a, b) => a + b, 0);
-  if (!total) return `<p class="note" style="margin-top:0">${T.distributionEmpty}</p>`;
+  if (!total) return `<p class="note tight">${T.distributionEmpty}</p>`;
   const max = Math.max(...counts);
 
   let s = '<div class="dist">';
@@ -187,7 +320,7 @@ function distributionTable(counts) {
   let rows = '';
   for (let v = 3; v >= -3; v--) {
     const c = counts[v + 3];
-    rows += `<tr><td>${M.signed(v, 0)} · ${MOOD_ANCHORS[String(v)]}</td>`
+    rows += `<tr><td>${M.signed(v, 0)} · ${esc(MOOD_ANCHORS[String(v)])}</td>`
       + `<td class="num">${c}</td>`
       + `<td class="num">${total ? Math.round((c / total) * 100) : 0} %</td></tr>`;
   }
@@ -201,9 +334,9 @@ function trendTable(series) {
     const val = m.value === null
       ? `<span class="muted">${T.tableNoData}</span>`
       : series.mode === 'daily'
-        ? `${M.signed(m.value, 0)} · ${MOOD_ANCHORS[String(Math.round(m.value))]}`
+        ? `${M.signed(m.value, 0)} · ${esc(MOOD_ANCHORS[String(Math.round(m.value))])}`
         : M.signed(m.value);
-    return `<tr><td>${m.label}</td><td class="num">${val}</td></tr>`;
+    return `<tr><td>${esc(m.label)}</td><td class="num">${val}</td></tr>`;
   }).join('');
   return `<table class="datatable"><thead><tr>
       <th>${series.mode === 'daily' ? T.tableDay : T.tableWeek}</th>
@@ -218,41 +351,19 @@ function tableToggle(id, open) {
     </button>`;
 }
 
-/** Malý sedmidenní přehled bez os. */
-function sparkline(values, w = 312, h = 54) {
-  const n = values.length;
-  const P = 6;
-  const x = (i) => P + (n === 1 ? (w - 2 * P) / 2 : (i * (w - 2 * P)) / (n - 1));
-  const y = (v) => P + ((3 - v) * (h - 2 * P)) / 6;
-  let s = `<line x1="${P}" y1="${y(0)}" x2="${w - P}" y2="${y(0)}" stroke="#44475A" stroke-width="1" opacity="0.6"/>`;
-  const pts = values.map((v, i) => (v === null ? null : [x(i), y(v)]));
-  for (const seg of segments(pts)) {
-    if (seg.length < 2) continue;
-    s += `<path d="M${seg.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('L')}" `
-      +  `fill="none" stroke="#BD93F9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
-  }
-  values.forEach((v, i) => {
-    if (v === null) return;
-    const lastOne = i === n - 1;
-    s += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${lastOne ? 4 : 2.6}" `
-      +  `fill="${M.moodColor(v)}" stroke="#21222C" stroke-width="${lastOne ? 2 : 0}"/>`;
-  });
-  return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Posledních sedm dní">${s}</svg>`;
-}
-
-/* ── DNES ────────────────────────────────────────────────────── */
+/* ── společné kusy formuláře ─────────────────────────────────── */
 
 function moodRowHTML(selected) {
   let s = '<div class="moodrow" id="moodrow" role="group" aria-label="Nálada">';
   for (let v = -3; v <= 3; v++) {
     const on = selected === v;
     const glyph = M.signed(v, 0);
-    s += `<button class="mood" data-m="${v}"${on ? ` data-v="${v}"` : ''} `
-      +  `aria-pressed="${on}" aria-label="${glyph} — ${MOOD_ANCHORS[String(v)]}">${glyph}</button>`;
+    s += `<button class="mood" data-m="${v}" aria-pressed="${on}" `
+      + `aria-label="${glyph} — ${esc(MOOD_ANCHORS[String(v)])}">${glyph}</button>`;
   }
   s += '</div><div class="anchors" aria-hidden="true">';
   for (let v = -3; v <= 3; v++) {
-    s += `<span>${MOOD_ANCHORS[String(v)].replace(' ', '<br>')}</span>`;
+    s += `<span>${esc(hyphenate(MOOD_ANCHORS[String(v)]))}</span>`;
   }
   return s + '</div>';
 }
@@ -269,18 +380,26 @@ function quadrantHTML(entry) {
   }
   return `<div class="quadrant">
       <span class="dot" style="background:${color}"></span>
-      <span><b>${title}</b><span>${sub}</span></span>
+      <span><b>${esc(title)}</b><span class="sub">${esc(sub)}</span></span>
     </div>`;
 }
 
-/** Pětistupňová škála. `field` se pak přečte z data atributu při kliknutí. */
-function scale5HTML(field, selected, ends, label, tone = '') {
-  let s = `<div class="scale5 ${tone}" data-scale="${field}" role="group" aria-label="${label}">`;
+/**
+ * Pětistupňová škála se všemi pěti kotvami. Popsané jen konce znamenají,
+ * že si střed každý vyloží po svém a po půl roce znamená „3" něco jiného
+ * než na začátku — přesně ten drift, kvůli kterému má celé měření cenu.
+ */
+function scale5HTML(field, selected, anchors, label, tone = '') {
+  let s = `<div class="scale5 ${tone}" data-scale="${field}" role="group" aria-label="${esc(label)}">`;
   for (let v = 1; v <= 5; v++) {
     s += `<button data-v="${v}" aria-pressed="${selected === v}" `
-      +  `aria-label="${label} ${v} z 5">${v}</button>`;
+      + `aria-label="${v} z 5 — ${esc(anchors[v - 1])}">${v}</button>`;
   }
-  return s + `</div><div class="scale-ends"><span>${ends[0]}</span><span>${ends[1]}</span></div>`;
+  s += '</div><div class="scale-anchors" aria-hidden="true">';
+  for (let v = 1; v <= 5; v++) {
+    s += `<span data-on="${selected === v}">${esc(hyphenate(anchors[v - 1]))}</span>`;
+  }
+  return s + '</div>';
 }
 
 function sleepHTML(entry) {
@@ -292,14 +411,12 @@ function sleepHTML(entry) {
         <span class="val" id="sleep-val" aria-live="polite">${M.has(h) ? M.formatHours(h) : '—'}</span>
         <button data-act="sleep-up" aria-label="Přidat půl hodiny">+</button>
       </div>
-      <div class="scale-ends">
+      <div class="ends">
         <span>${T.sleepHours}</span>
         ${M.has(h) ? `<button class="linkbtn" data-act="sleep-clear">${T.sleepUnknown}</button>` : '<span></span>'}
       </div>
-      <div style="margin-top:.875rem">
-        <span class="card-label">${T.sleepQuality}</span>
-        ${scale5HTML('sleepQuality', entry.sleep.quality, SLEEPQ_ENDS, T.sleepQuality, 'cy')}
-      </div>
+      <span class="card-label mt-4">${T.sleepQuality}</span>
+      ${scale5HTML('sleepQuality', entry.sleep.quality, SLEEPQ_ANCHORS, T.sleepQuality, 'cy')}
     </div>`;
 }
 
@@ -308,24 +425,65 @@ function tagsHTML(entry, allTags) {
   // jinak by se odznačit nedaly.
   const tags = allTags.filter((t) => !t.archived || entry.tags.includes(t.id));
   const chips = tags.map((t) =>
-    `<button class="chip${entry.tags.includes(t.id) ? ' on' : ''}" data-tag="${t.id}" `
-    + `aria-pressed="${entry.tags.includes(t.id)}">${t.label}</button>`).join('');
+    `<button class="chip${entry.tags.includes(t.id) ? ' on' : ''}" data-tag="${esc(t.id)}" `
+    + `aria-pressed="${entry.tags.includes(t.id)}">${esc(t.label)}</button>`).join('');
 
   // „Co pomohlo" se ukáže, až je co označit — jinak je to prázdná otázka.
   const chosen = tags.filter((t) => entry.tags.includes(t.id));
   const helped = chosen.length ? `
-      <div style="margin-top:1rem">
-        <span class="card-label">${T.helped}</span>
-        <div class="chips">${chosen.map((t) =>
-          `<button class="chip alt${entry.helped.includes(t.id) ? ' on' : ''}" data-helped="${t.id}" `
-          + `aria-pressed="${entry.helped.includes(t.id)}">${t.label}</button>`).join('')}</div>
-        <p class="note">${T.helpedHint}</p>
-      </div>` : '';
+      <span class="card-label mt-4">${T.helped}</span>
+      <div class="chips">${chosen.map((t) =>
+        `<button class="chip alt${entry.helped.includes(t.id) ? ' on' : ''}" data-helped="${esc(t.id)}" `
+        + `aria-pressed="${entry.helped.includes(t.id)}">${esc(t.label)}</button>`).join('')}</div>
+      <p class="note">${T.helpedHint}</p>` : '';
 
   return `<div class="card">
       <span class="card-label">${T.tags}</span>
       <div class="chips">${chips}</div>
       ${helped}
+    </div>`;
+}
+
+/** Slovník emocí — rozbalovací, aby večer, kdy na to není nálada, nepřekážel. */
+function emotionsHTML(entry) {
+  const n = entry.emotions.length;
+  const head = `<button class="disclosure" data-act="toggle-emotions" aria-expanded="${state.showEmotions}">
+      ${T.emotions}${n ? ` · ${T.emotionsChosen(n)}` : ''}
+    </button>`;
+  if (!state.showEmotions) {
+    return `<div class="card">
+        ${head}
+        ${n ? `<div class="chips mt-3">${entry.emotions.map((id) =>
+          `<span class="chip on static">${esc(emotionLabel(id))}</span>`).join('')}</div>` : ''}
+      </div>`;
+  }
+  const groups = EMOTION_GROUPS.map(([q, title]) => {
+    const list = EMOTIONS.filter((e) => e.q === q);
+    return `<span class="card-label mt-3">${esc(title)}</span>
+      <div class="chips">${list.map((e) =>
+        `<button class="chip warm${entry.emotions.includes(e.id) ? ' on' : ''}" `
+        + `data-emotion="${esc(e.id)}" aria-pressed="${entry.emotions.includes(e.id)}">`
+        + `${esc(e.label)}</button>`).join('')}</div>`;
+  }).join('');
+  return `<div class="card">
+      ${head}
+      ${groups}
+      <p class="note">${T.emotionsHint}</p>
+    </div>`;
+}
+
+/** Strategie zvládání. Krátkodobé úlevy jsou označené, ne schované. */
+function strategiesHTML(entry) {
+  return `<div class="card">
+      <span class="card-label">${T.strategies}</span>
+      <div class="chips">${STRATEGIES.map((s) => {
+        const on = entry.strategies.includes(s.id);
+        return `<button class="chip${on ? ' on' : ''}" data-strategy="${esc(s.id)}" `
+          + `aria-pressed="${on}">${esc(s.label)}`
+          + (s.shortTerm ? `<span class="badge">· ${T.strategyShort}</span>` : '')
+          + '</button>';
+      }).join('')}</div>
+      <p class="note">${T.strategiesHint}</p>
     </div>`;
 }
 
@@ -336,8 +494,8 @@ function medsHTML(entry, allMeds) {
   return `<div class="card">
       <span class="card-label">${T.meds}</span>
       <div class="chips">${meds.map((m) =>
-        `<button class="chip${taken.get(m.id) ? ' on' : ''}" data-med="${m.id}" `
-        + `aria-pressed="${!!taken.get(m.id)}">${m.label}</button>`).join('')}</div>
+        `<button class="chip${taken.get(m.id) ? ' on' : ''}" data-med="${esc(m.id)}" `
+        + `aria-pressed="${!!taken.get(m.id)}">${esc(m.label)}</button>`).join('')}</div>
     </div>`;
 }
 
@@ -346,13 +504,15 @@ function noteHTML(entry) {
   return `<div class="card">
       <span class="card-label">${T.note} · ${T.noteOptional}</span>
       <textarea id="note" maxlength="${M.NOTE_MAX}" rows="3"
-        placeholder="${T.notePlaceholder}">${n.replace(/</g, '&lt;')}</textarea>
-      <div class="scale-ends">
+        placeholder="${esc(T.notePlaceholder)}">${esc(n)}</textarea>
+      <div class="ends">
         <span>${T.noteWhyCapped}</span>
         <span id="note-count">${T.noteCounter(n.length, M.NOTE_MAX)}</span>
       </div>
     </div>`;
 }
+
+/* ── DNES ────────────────────────────────────────────────────── */
 
 function renderTodayForm(body) {
   const e = state.entry;
@@ -363,28 +523,31 @@ function renderTodayForm(body) {
   // Zapisuje se jiný den, než jaký ukazuje kalendář na zdi — musí to být vidět.
   if (!isToday) {
     s += `<div class="card accent"><div class="rowbetween">
-        <div><b style="font-size:.9375rem">${T.dateOverride}</b>
-          <span class="sub" style="display:block;font-family:var(--mono);font-size:.75rem;color:var(--muted)">
-            ${M.formatLong(state.targetDay)}</span></div>
-        <button class="btn-ghost" data-act="target-today">Zpět na dnešek</button>
+        <div>
+          <b>${T.dateOverride}</b>
+          <span class="note tight">${esc(M.formatLong(state.targetDay))}</span>
+        </div>
+        <button class="btn-ghost" data-act="target-today">${T.backToToday}</button>
       </div></div>`;
   }
 
   s += `<div class="card">
-      <div class="q">${T.question}</div>
+      <div class="q">${isToday ? T.question : T.questionOther}</div>
       ${moodRowHTML(e.mood)}
       ${quadrantHTML(e)}
     </div>
     <div class="card">
       <span class="card-label">${T.energy}</span>
-      ${scale5HTML('energy', e.energy, ENERGY_ENDS, T.energy)}
+      ${scale5HTML('energy', e.energy, ENERGY_ANCHORS, T.energy)}
+      <p class="note">${T.energyHint}</p>
     </div>
     <div class="card">
       <span class="card-label">${T.anxiety}</span>
-      ${scale5HTML('anxiety', e.anxiety, ANXIETY_ENDS, T.anxiety, 'pk')}
+      ${scale5HTML('anxiety', e.anxiety, ANXIETY_ANCHORS, T.anxiety, 'pk')}
     </div>
     ${sleepHTML(e)}
-    ${tagsHTML(e, state.tags)}`;
+    ${tagsHTML(e, state.tags)}
+    ${emotionsHTML(e)}`;
 
   // Vrstva 2 je schovaná: většina večerů skončí výš a nemá se prokousávat
   // poli, která nevyplní.
@@ -392,21 +555,19 @@ function renderTodayForm(body) {
       ${state.showTier2 ? T.addLess : T.addMore}
     </button>`;
   if (state.showTier2) {
-    s += medsHTML(e, state.meds) + noteHTML(e);
+    s += strategiesHTML(e) + medsHTML(e, state.meds) + noteHTML(e);
   }
-  s += '<div style="height:.25rem;flex:0 0 auto"></div>';
 
   body.innerHTML = s;
-  body.classList.add('has-savebar');
 
   const bar = $('#today-savebar');
   bar.hidden = false;
   const btn = $('#btn-save');
   btn.disabled = !M.isValid(e);
-  btn.textContent = M.isValid(e) ? T.save : T.saveHint;
+  btn.textContent = M.isValid(e) ? (isToday ? T.save : T.saveOther) : T.saveHint;
 }
 
-function renderTodaySummary(body) {
+function renderTodaySummary(body, due) {
   const e = state.entry;
   const y = state.yesterday;
 
@@ -414,18 +575,24 @@ function renderTodaySummary(body) {
       <div class="summary-head">
         <span class="moodbadge" style="background:${M.moodColor(e.mood)}">${M.signed(e.mood, 0)}</span>
         <span class="t">
-          <b>${MOOD_PHRASE[String(e.mood)]}</b>
+          <b>${esc(MOOD_PHRASE[String(e.mood)])}</b>
           <span>${e.retrospective ? T.retroBadge + ' · ' : ''}${M.formatTime(e.updatedAt)}</span>
         </span>
         <button class="btn-ghost" data-act="edit">${T.edit}</button>
       </div>
       <div class="cells">
-        <div class="cell"><div class="k">${T.energy}</div><div class="v">${M.has(e.energy) ? e.energy + ' / 5' : '—'}</div></div>
-        <div class="cell"><div class="k">${T.anxiety}</div><div class="v">${M.has(e.anxiety) ? e.anxiety + ' / 5' : '—'}</div></div>
-        <div class="cell"><div class="k">${T.sleep}</div><div class="v">${M.formatHours(e.sleep.hours)}</div></div>
+        <div class="cell"><div class="k">${T.energy}</div>
+          <div class="v">${M.has(e.energy) ? e.energy + ' / 5' : '—'}</div></div>
+        <div class="cell"><div class="k">${T.anxiety}</div>
+          <div class="v">${M.has(e.anxiety) ? e.anxiety + ' / 5' : '—'}</div></div>
+        <div class="cell"><div class="k">${T.sleep}</div>
+          <div class="v">${M.formatHours(e.sleep.hours)}</div></div>
       </div>
-      ${e.tags.length ? `<div class="chips" style="margin-top:.75rem">${
-        labelsFor(e.tags, state.tags).map((l) => `<span class="chip on static">${l}</span>`).join('')
+      ${e.tags.length ? `<div class="chips mt-3">${
+        labelsFor(e.tags, state.tags).map((l) => `<span class="chip on static">${esc(l)}</span>`).join('')
+      }</div>` : ''}
+      ${e.emotions.length ? `<div class="chips mt-3">${
+        e.emotions.map((id) => `<span class="chip warm on static">${esc(emotionLabel(id))}</span>`).join('')
       }</div>` : ''}
     </div>`;
 
@@ -433,21 +600,46 @@ function renderTodaySummary(body) {
   if (y && M.isValid(y)) {
     s += `<div class="card">
         <span class="card-label">${T.yesterday}</span>
-        <div class="summary-head" style="margin-bottom:0">
+        <div class="summary-head plain" style="margin-bottom:0">
           <span class="moodbadge sm" style="background:${M.moodColor(y.mood)}">${M.signed(y.mood, 0)}</span>
-          <span class="t"><b style="font-size:.875rem">${MOOD_PHRASE[String(y.mood)]}</b></span>
+          <span class="t"><b>${esc(MOOD_PHRASE[String(y.mood)])}</b></span>
         </div>
         <p class="note">${T.yesterdayNote}</p>
       </div>`;
   } else if (state.targetDay === M.logicalToday()) {
     const yKey = M.addDays(state.targetDay, -1);
     s += `<div class="card accent"><div class="rowbetween">
-        <div><b style="font-size:.9375rem">${T.backfillTitle}</b>
-          <span style="display:block;font-family:var(--mono);font-size:.75rem;color:var(--muted)">
-            ${M.formatLong(yKey)}</span></div>
+        <div>
+          <b>${T.backfillTitle}</b>
+          <span class="note tight">${esc(M.formatLong(yKey))}</span>
+        </div>
         <button class="btn-chip" data-act="backfill" data-day="${yKey}">${T.backfillCta}</button>
       </div></div>`;
   }
+
+  // Dotazník, který je na řadě. Nikdy neblokuje a nikdy se nevnucuje víc
+  // než jednou kartou.
+  if (due.length) {
+    const d = due[0];
+    const def = INS.INSTRUMENTS[d.instrument];
+    s += `<div class="card accent"><div class="rowbetween">
+        <div>
+          <b>${esc(def.name)} — ${esc(def.full.toLowerCase())}</b>
+          <span class="note tight">${d.never ? 'zatím nevyplněno' : 'je na řadě'} · ${def.items.length} otázek</span>
+        </div>
+        <button class="btn-chip" data-act="start-quiz" data-instrument="${d.instrument}">Vyplnit</button>
+      </div></div>`;
+  }
+
+  s += `<div class="card">
+      <div class="rowbetween">
+        <div>
+          <b>Záznam myšlenky</b>
+          <span class="note tight">Když se něco pořád vrací. Osm kroků, dá se přerušit.</span>
+        </div>
+        <button class="btn-ghost" data-act="new-thought">Začít</button>
+      </div>
+    </div>`;
 
   s += `<div class="card">
       <span class="card-label">${T.last7}</span>
@@ -455,8 +647,18 @@ function renderTodaySummary(body) {
     </div>`;
 
   body.innerHTML = s;
-  body.classList.remove('has-savebar');
   $('#today-savebar').hidden = true;
+}
+
+/** Dotazníky, které jsou na řadě. Nikdy neblokují zápis. */
+async function dueInstruments() {
+  const out = [];
+  for (const id of INS.ORDER) {
+    const last = await db.lastAssessment(id);
+    if (!last) { out.push({ instrument: id, never: true }); continue; }
+    if (INS.isDue(id, last.takenAt)) out.push({ instrument: id, never: false });
+  }
+  return out;
 }
 
 async function renderToday() {
@@ -467,20 +669,22 @@ async function renderToday() {
   $('#today-date').textContent = M.formatLong(state.targetDay);
 
   const showForm = !M.isValid(state.entry) || state.editing;
-  if (showForm) renderTodayForm(body);
-  else renderTodaySummary(body);
 
-  // počítadlo za posledních 30 dní
+  // počítadlo za posledních 30 dní — načítá se před vykreslením, aby se
+  // po uložení první nálady přepsalo hned, ne až po přepnutí obrazovky
   const from = M.addDays(today, -29);
   const rows = await db.daysBetween(from, today);
   const logged = rows.filter(M.isValid).length;
   $('#today-count').textContent = T.countOf(logged, 30);
 
-  if (!showForm) {
-    const week = seriesFor(rows, M.addDays(today, -6), 7, M.addDays);
-    const slot = $('#spark-slot');
-    if (slot) slot.innerHTML = sparkline(week.values);
+  if (showForm) {
+    renderTodayForm(body);
+    return;
   }
+
+  renderTodaySummary(body, await dueInstruments());
+  const week = seriesFor(rows, M.addDays(today, -6), 7, M.addDays);
+  fillChart('spark-slot', (w) => sparkline(week.values, w));
 }
 
 /* ── KALENDÁŘ ────────────────────────────────────────────────── */
@@ -510,14 +714,14 @@ async function renderCalendar() {
     const key = M.dateKey(new Date(y, m, d));
     const e = byDay.get(key);
     if (key > today) {
-      cells += `<div class="cal future" data-day="${key}">${d}</div>`;
+      cells += `<div class="cal future">${d}</div>`;
     } else if (!e || !M.isValid(e)) {
       cells += `<button class="cal none" data-day="${key}" `
-        + `aria-label="${M.formatLong(key)} — ${T.notLogged}">${d}</button>`;
+        + `aria-label="${esc(M.formatLong(key))} — ${T.notLogged}">${d}</button>`;
     } else {
       const cls = 'cal' + (e.retrospective ? ' retro' : '') + (key === today ? ' today' : '');
       cells += `<button class="${cls}" data-day="${key}" style="background:${M.moodColor(e.mood)}" `
-        + `aria-label="${M.formatLong(key)} — ${MOOD_PHRASE[String(e.mood)]}">${d}</button>`;
+        + `aria-label="${esc(M.formatLong(key))} — ${esc(MOOD_PHRASE[String(e.mood)])}">${d}</button>`;
     }
   }
 
@@ -545,7 +749,7 @@ function monthSummaryHTML(rows, daysInMonth, today, fromKey, toKey) {
   // vypadal vždycky jako propadák.
   const elapsed = today > toKey ? daysInMonth
     : today < fromKey ? 0
-    : M.diffDays(fromKey, today) + 1;
+      : M.diffDays(fromKey, today) + 1;
 
   const best = valid.reduce((a, b) => (b.mood > a.mood ? b : a));
   const worst = valid.reduce((a, b) => (b.mood < a.mood ? b : a));
@@ -566,13 +770,6 @@ function monthSummaryHTML(rows, daysInMonth, today, fromKey, toKey) {
 
 /* ── DETAIL DNE ──────────────────────────────────────────────── */
 
-function labelsFor(ids, list) {
-  return ids.map((id) => {
-    const found = list.find((x) => x.id === id);
-    return found ? found.label : id;   // smazaný štítek zůstává v historii pod id
-  });
-}
-
 async function renderDay() {
   const key = state.dayViewKey;
   const e = state.dayView;
@@ -585,11 +782,12 @@ async function renderDay() {
   if (!e || !M.isValid(e)) {
     const tooOld = age > M.BACKFILL_LIMIT;
     const future = age < 0;
-    $('#day-body').innerHTML = `<div class="card"><div class="empty-state">
+    $('#day-body').innerHTML = `<div class="card">
+      <div class="empty-state">
         <span class="ico">🌑</span><b>${T.notLogged}</b>
         <p>${future ? T.futureDay : tooOld ? T.tooOldToBackfill(M.BACKFILL_LIMIT) : ''}</p>
-      </div>${(future || tooOld) ? '' : `
-      <button class="btn-save" data-act="log-this-day">${T.logThisDay}</button>`}
+      </div>
+      ${(future || tooOld) ? '' : `<button class="btn-save" data-act="log-this-day">${T.logThisDay}</button>`}
     </div>`;
     return;
   }
@@ -597,54 +795,78 @@ async function renderDay() {
   const rows = [];
   if (M.has(e.energy)) rows.push([T.energy, `${e.energy} / 5`]);
   if (M.has(e.anxiety)) rows.push([T.anxiety, `${e.anxiety} / 5`]);
-  if (M.has(e.sleep.hours)) rows.push([T.sleepHours, M.formatHours(e.sleep.hours)]);
+  if (M.has(e.sleep.hours)) rows.push([T.sleep, M.formatHours(e.sleep.hours)]);
   if (M.has(e.sleep.quality)) rows.push([T.sleepQuality, `${e.sleep.quality} / 5`]);
 
   const q = M.quadrantLabel(e.mood, e.energy);
+  // Kvadrant se nevypisuje, když by jen zopakoval větu nad ním.
+  const qText = q && q[0] !== MOOD_PHRASE[String(e.mood)] ? q[0] : '';
   const tagLabels = labelsFor(e.tags, state.tags);
   const helpedLabels = labelsFor(e.helped, state.tags);
   const takenMeds = (e.meds || []).filter((m) => m.taken);
+  const dayThoughts = await db.thoughtsForDay(key);
 
   $('#day-body').innerHTML = `
     <div class="card">
       <div class="summary-head">
         <span class="moodbadge" style="background:${M.moodColor(e.mood)}">${M.signed(e.mood, 0)}</span>
         <span class="t">
-          <b>${MOOD_PHRASE[String(e.mood)]}</b>
-          <span>${q ? q[0] : ''}${e.retrospective ? ' · ' + T.retroBadge : ''}</span>
+          <b>${esc(MOOD_PHRASE[String(e.mood)])}</b>
+          <span>${esc(qText)}${e.retrospective ? (qText ? ' · ' : '') + T.retroBadge : ''}</span>
         </span>
         <button class="btn-ghost" data-act="edit-day">${T.edit}</button>
       </div>
       ${rows.length ? `<div class="kv">${rows.map(([k, v]) =>
-        `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>` : ''}
+    `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>` : ''}
     </div>
+
+    ${e.emotions.length ? `<div class="card">
+      <span class="card-label">${T.emotions}</span>
+      <div class="chips">${e.emotions.map((id) =>
+    `<span class="chip warm on static">${esc(emotionLabel(id))}</span>`).join('')}</div>
+    </div>` : ''}
 
     ${tagLabels.length ? `<div class="card">
       <span class="card-label">${T.tags}</span>
-      <div class="chips">${tagLabels.map((l) => `<span class="chip on static">${l}</span>`).join('')}</div>
-      ${helpedLabels.length ? `<div style="margin-top:.75rem">
-        <span class="card-label">${T.helped}</span>
+      <div class="chips">${tagLabels.map((l) => `<span class="chip on static">${esc(l)}</span>`).join('')}</div>
+      ${helpedLabels.length ? `<span class="card-label mt-3">${T.helped}</span>
         <div class="chips">${helpedLabels.map((l) =>
-          `<span class="chip alt on static">${l}</span>`).join('')}</div></div>` : ''}
+    `<span class="chip alt on static">${esc(l)}</span>`).join('')}</div>` : ''}
+    </div>` : ''}
+
+    ${e.strategies.length ? `<div class="card">
+      <span class="card-label">${T.strategies}</span>
+      <div class="chips">${e.strategies.map((id) =>
+    `<span class="chip on static">${esc(strategyById(id).label)}</span>`).join('')}</div>
     </div>` : ''}
 
     ${takenMeds.length ? `<div class="card">
       <span class="card-label">${T.meds}</span>
       <div class="chips">${labelsFor(takenMeds.map((m) => m.id), state.meds)
-        .map((l) => `<span class="chip on static">${l} · ${T.medsTaken}</span>`).join('')}</div>
+    .map((l) => `<span class="chip on static">${esc(l)} · ${T.medsTaken}</span>`).join('')}</div>
     </div>` : ''}
 
     ${e.note ? `<div class="card">
       <span class="card-label">${T.note}</span>
-      <p style="font-size:.9375rem;line-height:1.55">${e.note.replace(/</g, '&lt;')}</p>
+      <p>${esc(e.note)}</p>
+    </div>` : ''}
+
+    ${dayThoughts.length ? `<div class="card">
+      <span class="card-label">Záznamy myšlenek</span>
+      <div class="list">${dayThoughts.map((r) => `
+        <button data-open-thought="${r.id}">
+          <span>${esc((r.thought || r.situation || '').slice(0, 70))}
+            <span class="sub">${shiftLabel(r)}</span></span>
+          <span class="val">›</span>
+        </button>`).join('')}</div>
     </div>` : ''}
 
     <div class="card">
-      <p class="note" style="margin-top:0">
+      <p class="note tight">
         Zapsáno ${M.formatTime(e.createdAt)}${e.updatedAt !== e.createdAt
-          ? ` · upraveno ${M.formatTime(e.updatedAt)}` : ''}
+    ? ` · upraveno ${M.formatTime(e.updatedAt)}` : ''}
       </p>
-      <button class="btn-ghost danger" data-act="delete-day" style="width:100%;margin-top:.5rem">
+      <button class="btn-ghost danger mt-2" data-act="delete-day" style="width:100%;margin-top:.5rem">
         ${T.deleteDay}
       </button>
     </div>`;
@@ -652,7 +874,7 @@ async function renderDay() {
 
 async function openDay(key) {
   state.dayViewKey = key;
-  state.dayView = (await db.getDay(key)) || null;
+  state.dayView = hydrate(await db.getDay(key));
   await go('day');
 }
 
@@ -661,7 +883,7 @@ async function openDay(key) {
 function rangeSelectorHTML() {
   return `<div class="segmented" role="group" aria-label="${T.rangeLabel}">
       ${T.ranges.map(([n, label]) =>
-        `<button data-range="${n}" aria-pressed="${state.range === n}">${label}</button>`).join('')}
+    `<button data-range="${n}" aria-pressed="${state.range === n}">${label}</button>`).join('')}
     </div>`;
 }
 
@@ -703,10 +925,10 @@ async function renderInsights() {
 
   const readout = chosen && chosen.value !== null
     ? `<span class="dot" style="background:${M.moodColor(Math.round(chosen.value))}"></span>
-       <b>${chosen.label}</b>
+       <b>${esc(chosen.label)}</b>
        <span>${series.mode === 'daily'
-          ? `${M.signed(chosen.value, 0)} · ${MOOD_ANCHORS[String(Math.round(chosen.value))]}`
-          : `${M.signed(chosen.value)} · ${chosen.n} ${T.daysGenitive(chosen.n)}`}</span>`
+    ? `${M.signed(chosen.value, 0)} · ${esc(MOOD_ANCHORS[String(Math.round(chosen.value))])}`
+    : `${M.signed(chosen.value)} · ${chosen.n} ${T.daysGenitive(chosen.n)}`}</span>`
     : `<span class="dot" style="background:var(--edge)"></span><span>${T.chartTapHint}</span>`;
 
   const openTrend = !!state.tables.trend;
@@ -719,7 +941,7 @@ async function renderInsights() {
         <span class="big">${M.signed(mean(present))}</span>
         <span class="unit">${T.coverage(logged, range)}</span>
       </div>
-      <div style="margin-top:.75rem">${trendChart(series, 344, 112, sel)}</div>
+      <div class="mt-3" id="trend-slot"></div>
       <div class="readout">${readout}</div>
       <p class="note">${series.note} <strong>${T.chartGaps}</strong></p>
       ${logged / range < 0.5 ? `<p class="note">${T.coverageThin}</p>` : ''}
@@ -735,9 +957,539 @@ async function renderInsights() {
       ${openDist ? `<div class="tablewrap">${distributionTable(counts)}</div>` : ''}
     </div>
 
-    <div class="card"><p class="note" style="margin-top:0">${T.insightsLater}</p></div>`;
+    <div class="callout info">
+      <b>${T.howToRead}</b>
+      <p>${T.howToReadBody}</p>
+      <p><strong>${T.howToReadCause}</strong></p>
+    </div>
+
+    <div class="card"><p class="note tight">${T.insightsLater}</p></div>`;
 
   body.innerHTML = s;
+  fillChart('trend-slot', (w) => trendChart(series, w, 130, sel));
+}
+
+/* ── DOTAZNÍKY ───────────────────────────────────────────────── */
+
+function bandChip(instrument, score) {
+  const b = INS.bandFor(instrument, score);
+  return `<span class="band" data-tone="${b.tone}"><span class="dot"></span>${esc(b.label)}</span>`;
+}
+
+async function renderInstruments() {
+  const body = $('#instruments-body');
+  let s = `<div class="callout info">
+      <b>K čemu jsou</b>
+      <p>Denní škála zachytí, jak se věci hýbou. Tyhle tři dotazníky říkají,
+      kde ta hladina leží proti tomu, co je u ostatních lidí běžné. Vyhodnocovací
+      okno jsou dva týdny a nezkracuje se — kratší okno by z čísla udělalo něco,
+      co se s ničím srovnat nedá.</p>
+      <p><strong>Pásmo není diagnóza.</strong> Je to odkaz na normu a podnět
+      k rozhovoru, ne nález.</p>
+    </div>`;
+
+  for (const id of INS.ORDER) {
+    const def = INS.INSTRUMENTS[id];
+    const list = await db.assessmentsFor(id);
+    const last = list[list.length - 1];
+    const prev = list[list.length - 2];
+    const due = last ? INS.daysUntilDue(id, last.takenAt) : null;
+    const open = state.instrumentView === id;
+
+    const change = last && prev ? INS.reliableChange(id, last.total, prev.total) : null;
+
+    s += `<div class="card">
+      <div class="rowbetween">
+        <div>
+          <b>${esc(def.name)}</b>
+          <span class="note tight">${esc(def.full)}</span>
+        </div>
+        <button class="btn-chip" data-act="start-quiz" data-instrument="${id}">
+          ${last ? 'Vyplnit znovu' : 'Vyplnit'}
+        </button>
+      </div>
+      <p class="note">${esc(def.purpose)}</p>`;
+
+    if (last) {
+      s += `<div class="score mt-3">
+          <span class="n">${last.total}</span>
+          <span class="of">/ ${def.displayMax}</span>
+          ${bandChip(id, last.total)}
+        </div>
+        <p class="note tight">Naposledy ${esc(M.formatDate(dayOf(last)))}
+          ${due !== null ? (due > 0
+    ? ` · další za ${due} ${T.daysGenitive(due)}`
+    : ' · je na řadě') : ''}</p>`;
+
+      if (change) {
+        s += `<p class="note">Změna oproti minule: <strong>${change.diff > 0 ? '+' : '−'}${Math.abs(change.diff)}
+          ${change.better ? 've prospěch zlepšení' : 'směrem k horšímu'}</strong>.
+          Rozdíl přesahuje práh ${def.reliableChange} bodů, takže ho lze brát vážněji než kolísání měření.</p>`;
+      } else if (prev) {
+        s += `<p class="note">Oproti minule beze změny, kterou by šlo odlišit od chyby měření
+          (práh je ${def.reliableChange} bodů).</p>`;
+      }
+
+      if (list.length >= 2) {
+        s += `<button class="tabletoggle" data-instrument-view="${id}" aria-expanded="${open}">
+            ${open ? 'Skrýt historii' : `Historie · ${list.length}`}
+          </button>`;
+        if (open) {
+          s += `<div class="mt-3" id="band-slot-${id}"></div>
+            <div class="tablewrap">${assessmentTable(id, list)}</div>`;
+        }
+      }
+    } else {
+      s += `<p class="note">Zatím nevyplněno. ${def.items.length} otázek, zabere to pár minut.</p>`;
+    }
+
+    s += '</div>';
+  }
+
+  body.innerHTML = s;
+
+  if (state.instrumentView) {
+    const list = await db.assessmentsFor(state.instrumentView);
+    if (list.length >= 2) {
+      fillChart(`band-slot-${state.instrumentView}`, (w) => bandChart(state.instrumentView, list, w));
+    }
+  }
+}
+
+function assessmentTable(id, list) {
+  const rows = [...list].reverse().map((a) => `<tr>
+      <td>${esc(M.formatDate(dayOf(a)))}</td>
+      <td class="num">${a.total}</td>
+      <td class="muted">${esc(INS.bandFor(id, a.total).label)}</td>
+    </tr>`).join('');
+  return `<table class="datatable"><thead><tr>
+      <th>${T.tableDay}</th><th class="num">${T.tableScore}</th><th>${T.tableBand}</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+/* ── vyplňování dotazníku ────────────────────────────────────── */
+
+async function startQuiz(instrument) {
+  const def = INS.INSTRUMENTS[instrument];
+  const draft = await db.getSetting('quizDraft', null);
+  if (draft && draft.instrument === instrument && Array.isArray(draft.items)
+      && draft.items.length === def.items.length) {
+    state.quiz = { instrument, index: draft.index || 0, items: draft.items, result: null };
+  } else {
+    state.quiz = { instrument, index: 0, items: new Array(def.items.length).fill(null), result: null };
+  }
+  await go('quiz');
+}
+
+async function saveQuizDraft() {
+  if (!state.quiz || state.quiz.result) return;
+  await db.setSetting('quizDraft', {
+    instrument: state.quiz.instrument,
+    index: state.quiz.index,
+    items: state.quiz.items
+  });
+}
+
+function renderQuiz() {
+  const q = state.quiz;
+  if (!q) return;
+  const def = INS.INSTRUMENTS[q.instrument];
+  const body = $('#quiz-body');
+  const bar = $('#quiz-savebar');
+
+  $('#quiz-title').textContent = def.name;
+
+  if (q.result) {
+    $('#quiz-sub').textContent = 'výsledek';
+    bar.hidden = true;
+    renderQuizResult(body, q);
+    return;
+  }
+
+  const i = q.index;
+  const answered = q.items.filter((v) => v !== null).length;
+  $('#quiz-sub').textContent = `otázka ${i + 1} z ${def.items.length}`;
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="q-progress">
+        <span class="track"><i style="width:${(answered / def.items.length) * 100}%"></i></span>
+        <span class="n">${answered} / ${def.items.length}</span>
+      </div>
+      <p class="q-stem mt-3">${esc(g(def.stem))}</p>
+      <p class="q-item">${esc(g(def.items[i]))}</p>
+      <div class="q-opts">
+        ${def.options.map((o) => `
+          <button class="q-opt" data-opt="${o.v}" aria-pressed="${q.items[i] === o.v}">
+            <span class="radio" aria-hidden="true"></span>
+            <span>${esc(o.label)}</span>
+            <span class="pts">${o.v}</span>
+          </button>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <p class="note tight">Odpovídej za <strong>poslední dva týdny</strong>, ne za dnešek.
+        Okno je součástí dotazníku — zkrácené okno dá číslo, které se s ničím nedá srovnat.</p>
+    </div>`;
+
+  bar.hidden = false;
+  const next = $('#quiz-next');
+  const isLast = i === def.items.length - 1;
+  const allAnswered = q.items.every((v) => v !== null);
+  next.disabled = q.items[i] === null;
+  next.textContent = isLast ? (allAnswered ? 'Vyhodnotit' : 'Další nezodpovězená') : 'Další';
+}
+
+function renderQuizResult(body, q) {
+  const def = INS.INSTRUMENTS[q.instrument];
+  const { total, band } = q.result;
+  const change = q.result.change;
+
+  let s = `<div class="card">
+      <span class="card-label">${esc(def.name)} · ${esc(M.formatDate(M.logicalToday()))}</span>
+      <div class="score">
+        <span class="n">${total}</span>
+        <span class="of">/ ${def.displayMax}</span>
+      </div>
+      ${bandChip(q.instrument, total)}
+      <p class="note">${esc(band.hint)}</p>
+    </div>`;
+
+  if (change) {
+    s += `<div class="callout ${change.better ? 'good' : 'serious'}">
+        <b>Změna oproti minule</b>
+        <p>${change.diff > 0 ? '+' : '−'}${Math.abs(change.diff)} bodů —
+        rozdíl přesahuje práh ${def.reliableChange} bodů, takže ho lze brát vážněji
+        než kolísání měření.</p>
+      </div>`;
+  }
+
+  // Bezpečnostní karta u položky 9. Klidná, neblokující, hned za skórem.
+  if (INS.triggersSafetyCard(q.instrument, q.items)) {
+    s += safetyCardHTML();
+  }
+
+  s += `<div class="callout info">
+      <b>Co to není</b>
+      <p>Tohle číslo není diagnóza a nic o tobě nerozhoduje. Je to hodnota
+      dotazníku, který se používá jako první orientace — a jako podklad pro
+      rozhovor s někým, kdo s tím umí pracovat.</p>
+    </div>
+    <div class="card">
+      <button class="btn-save" data-act="quiz-done">Hotovo</button>
+    </div>`;
+
+  body.innerHTML = s;
+}
+
+function safetyCardHTML() {
+  return `<div class="card crisis">
+      <span class="card-label" style="color:var(--orange)">Ještě něco</span>
+      <p class="note tight">U poslední otázky byla zvolena jiná odpověď než „Vůbec ne".
+        Takové myšlenky jsou u deprese časté a nejsou selháním. Nemusí se to řešit o samotě.</p>
+      ${crisisLinesHTML()}
+    </div>`;
+}
+
+function crisisLinesHTML() {
+  return T.crisis.map(([name, num, sub]) =>
+    `<a class="line" href="tel:${num.replace(/\s/g, '')}">
+       <span class="name">${esc(name)}<span class="sub">${esc(sub)}</span></span>
+       <span class="num">${esc(num)}</span>
+     </a>`).join('');
+}
+
+async function answerQuiz(value) {
+  const q = state.quiz;
+  const def = INS.INSTRUMENTS[q.instrument];
+  q.items[q.index] = value;
+  haptic();
+  await saveQuizDraft();
+
+  // Posun na další nezodpovězenou. Automatický skok drží tempo, ale poslední
+  // otázka se nevyhodnotí sama — přečíst si výsledek má být rozhodnutí.
+  if (q.index < def.items.length - 1) {
+    setTimeout(() => {
+      if (state.quiz !== q || q.result || state.screen !== 'quiz') return;
+      q.index += 1;
+      renderQuiz();
+      saveQuizDraft();
+    }, 180);
+    renderQuiz();
+    return;
+  }
+  renderQuiz();
+}
+
+async function finishQuiz() {
+  const q = state.quiz;
+  const def = INS.INSTRUMENTS[q.instrument];
+
+  // Nezodpovězená otázka: skočíme na ni místo vyhodnocení. Částečný dotazník
+  // nemá skór, který by šlo srovnávat s normou.
+  const missing = q.items.findIndex((v) => v === null);
+  if (missing >= 0) {
+    q.index = missing;
+    renderQuiz();
+    return;
+  }
+
+  const evalResult = INS.evaluate(q.instrument, q.items);
+  const prev = await db.lastAssessment(q.instrument);
+  const change = prev ? INS.reliableChange(q.instrument, evalResult.total, prev.total) : null;
+
+  const record = {
+    instrument: q.instrument,
+    takenAt: new Date().toISOString(),
+    day: M.logicalToday(),
+    items: q.items.slice(),
+    total: evalResult.total,
+    band: evalResult.band.key
+  };
+
+  try {
+    await db.putAssessment(record);
+    await db.setSetting('quizDraft', null);
+  } catch (err) {
+    console.error('assessment:', err);
+    toast(T.saveFail);
+    return;
+  }
+
+  q.result = { total: evalResult.total, band: evalResult.band, change };
+  haptic(14);
+  announce(`${def.name}: ${evalResult.total} — ${evalResult.band.label}`);
+  renderQuiz();
+}
+
+/* ── ZÁZNAM MYŠLENKY ─────────────────────────────────────────── */
+
+function shiftLabel(r) {
+  const s = TH.shift(r);
+  if (s === null) return 'nedokončeno';
+  if (s === 0) return 'beze změny';
+  return s < 0 ? `síla emoce −${Math.abs(s)}` : `síla emoce +${s}`;
+}
+
+async function renderThoughts() {
+  const list = (await db.allThoughts()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  state.thoughts = list;
+
+  let s = `<div class="callout info">
+      <b>K čemu to je</b>
+      <p>Sledovat náladu samo o sobě nic nemění. Tohle je jediné místo, kde
+      aplikace přechází od měření k něčemu, co se dá dělat: rozebrat jednu
+      myšlenku na díly a zkusit ji říct přesněji.</p>
+      <p>Osm kroků, dá se kdykoli přerušit a vrátit se. Rozepsaný záznam
+      se ukládá průběžně.</p>
+    </div>
+    <div class="card">
+      <button class="btn-save" data-act="new-thought">Nový záznam</button>
+    </div>`;
+
+  if (!list.length) {
+    s += `<div class="card"><div class="empty-state">
+        <span class="ico">🌘</span><b>Zatím žádný záznam</b>
+        <p>Nejlíp se to dělá krátce po tom, co se něco stalo — dokud je ta věta
+        ještě čerstvá.</p>
+      </div></div>`;
+  } else {
+    s += `<div class="card">
+      <span class="card-label">Historie · ${list.length}</span>
+      <div class="list">${list.map((r) => `
+        <button data-open-thought="${r.id}">
+          <span>${esc((r.thought || r.situation || '—').slice(0, 80))}
+            <span class="sub">${esc(M.formatDate(r.day))} · ${shiftLabel(r)}</span></span>
+          <span class="val">${TH.isComplete(r) ? '✓' : '…'}</span>
+        </button>`).join('')}</div>
+    </div>`;
+  }
+
+  $('#thoughts-body').innerHTML = s;
+}
+
+function rangeHTML(id, label, value) {
+  return `<span class="card-label">${esc(label)}</span>
+    <div class="range">
+      <input type="range" min="0" max="${TH.INTENSITY_MAX}" step="${TH.INTENSITY_STEP}"
+        value="${value === null ? 50 : value}" data-range-field="${id}"
+        aria-label="${esc(label)}">
+      <span class="val" data-range-val="${id}">${value === null ? 50 : value}</span>
+    </div>`;
+}
+
+function renderThought() {
+  const r = state.thought;
+  if (!r) return;
+  const body = $('#thought-body');
+  const bar = $('#thought-savebar');
+
+  if (state.thoughtMode === 'view') {
+    bar.hidden = true;
+    renderThoughtDetail(body, r);
+    return;
+  }
+
+  const step = TH.STEPS[state.thoughtStep];
+  $('#thought-title').textContent = 'Záznam myšlenky';
+  $('#thought-sub').textContent = `krok ${state.thoughtStep + 1} z ${TH.STEPS.length}`;
+
+  let inner = '';
+  switch (step.key) {
+    case 'emotions':
+      inner = EMOTION_GROUPS.map(([q, title]) => {
+        const list = EMOTIONS.filter((e) => e.q === q);
+        return `<span class="card-label mt-3">${esc(title)}</span>
+          <div class="chips">${list.map((e) =>
+    `<button class="chip warm${r.emotions.includes(e.id) ? ' on' : ''}" `
+            + `data-tr-emotion="${esc(e.id)}" aria-pressed="${r.emotions.includes(e.id)}">`
+            + `${esc(e.label)}</button>`).join('')}</div>`;
+      }).join('')
+        + `<div class="mt-4">${rangeHTML('intensityBefore', 'Jak silné to bylo?', r.intensityBefore)}</div>`;
+      break;
+
+    case 'distortions':
+      inner = `<div class="chips">${TH.DISTORTIONS.map((d) =>
+        `<button class="chip${r.distortions.includes(d.id) ? ' on' : ''}" `
+        + `data-tr-distortion="${esc(d.id)}" aria-pressed="${r.distortions.includes(d.id)}">`
+        + `${esc(d.label)}</button>`).join('')}</div>
+        ${r.distortions.length ? `<div class="stack mt-3">${TH.DISTORTIONS
+    .filter((d) => r.distortions.includes(d.id))
+    .map((d) => `<p class="note tight"><strong>${esc(d.label)}</strong> — ${esc(d.desc)}</p>`)
+    .join('')}</div>` : ''}`;
+      break;
+
+    case 'after':
+      // Obě čísla se předvyplní hodnotou „před". Kdyby zůstala prázdná,
+      // posuvník by ukazoval jedno a záznam držel druhé — a hlavně by
+      // přehled posunu zůstal prázdný právě ve chvíli, kvůli které
+      // celý formulář existuje.
+      if (r.beliefAfter === null) r.beliefAfter = r.beliefBefore;
+      if (r.intensityAfter === null) r.intensityAfter = r.intensityBefore;
+      inner = `<div class="mt-3">${rangeHTML('beliefAfter',
+        'Jak moc té původní myšlence věříš teď?', r.beliefAfter)}</div>
+        <div class="mt-4">${rangeHTML('intensityAfter',
+    'Jak silná je ta emoce teď?', r.intensityAfter)}</div>
+        <div id="tr-shift">${shiftHTML(r)}</div>`;
+      break;
+
+    case 'thought':
+      inner = `<textarea data-tr-field="thought" maxlength="${step.max}" rows="3"
+          placeholder="${esc(step.placeholder)}">${esc(r.thought)}</textarea>
+        <div class="mt-4">${rangeHTML('beliefBefore', g('Jak moc jsi tomu v tu chvíli věřil{|a}?'), r.beliefBefore)}</div>`;
+      break;
+
+    default:
+      inner = `<textarea data-tr-field="${step.key}" maxlength="${step.max}" rows="4"
+        placeholder="${esc(step.placeholder || '')}">${esc(r[step.key] || '')}</textarea>`;
+  }
+
+  body.innerHTML = `
+    <div class="steps" aria-hidden="true">${TH.STEPS.map((_, i) =>
+    `<i data-on="${i === state.thoughtStep}" data-done="${i < state.thoughtStep}"></i>`).join('')}</div>
+    <div class="card">
+      <div class="tr-title">${esc(g(step.title))}</div>
+      <p class="tr-hint">${esc(g(step.hint))}</p>
+      <div class="mt-3">${inner}</div>
+    </div>
+    ${state.thoughtStep === 0 ? `<div class="card">
+      <p class="note tight">Rozepsaný záznam se ukládá sám. Když to teď nedojde do konce,
+      zůstane rozdělané a dá se v něm pokračovat.</p>
+    </div>` : ''}`;
+
+  bar.hidden = false;
+  $('#thought-prev').textContent = state.thoughtStep === 0 ? 'Zavřít' : 'Zpět';
+  $('#thought-next').textContent = state.thoughtStep === TH.STEPS.length - 1 ? 'Uložit' : 'Dál';
+}
+
+function shiftHTML(r) {
+  const s = TH.shift(r);
+  const b = TH.beliefShift(r);
+  if (s === null && b === null) return '';
+  const cell = (k, from, to, diff) => `
+    <div class="cell">
+      <div class="k">${esc(k)}</div>
+      <div class="v">${from} <span class="arrow">→</span> ${to}
+        ${diff !== null && diff !== 0
+    ? `<span class="${diff < 0 ? 'down' : 'up'}">${diff < 0 ? '−' : '+'}${Math.abs(diff)}</span>`
+    : ''}</div>
+    </div>`;
+  return `<div class="shift mt-4">
+      ${s !== null ? cell('Síla emoce', r.intensityBefore, r.intensityAfter, s) : ''}
+      ${b !== null ? cell('Věřím tomu', r.beliefBefore, r.beliefAfter, b) : ''}
+    </div>
+    <p class="note">Posun bývá malý a to je v pořádku. Cílem není myšlenku vyvrátit,
+    ale přestat ji brát jako jediný možný popis toho, co se stalo.</p>`;
+}
+
+function renderThoughtDetail(body, r) {
+  $('#thought-title').textContent = 'Záznam myšlenky';
+  $('#thought-sub').textContent = M.formatLong(r.day);
+
+  const block = (k, v, quote = false) => (v && String(v).trim() ? `
+    <div class="tr-block">
+      <div class="k">${esc(k)}</div>
+      <div class="v${quote ? ' quote' : ''}">${esc(v)}</div>
+    </div>` : '');
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="tr-summary">
+        ${block('Situace', r.situation)}
+        ${r.emotions.length ? `<div class="tr-block">
+          <div class="k">Pocity</div>
+          <div class="chips mt-2">${r.emotions.map((id) =>
+    `<span class="chip warm on static">${esc(emotionLabel(id))}</span>`).join('')}</div>
+        </div>` : ''}
+        ${block('Automatická myšlenka', r.thought, true)}
+        ${r.distortions.length ? `<div class="tr-block">
+          <div class="k">Vzorce</div>
+          <div class="chips mt-2">${r.distortions.map((id) => {
+    const d = TH.DISTORTIONS.find((x) => x.id === id);
+    return `<span class="chip on static">${esc(d ? d.label : id)}</span>`;
+  }).join('')}</div>
+        </div>` : ''}
+        ${block('Co ji podporuje', r.evidenceFor)}
+        ${block('Co jí odporuje', r.evidenceAgainst)}
+        ${block('Vyvážená verze', r.alternative, true)}
+      </div>
+      ${shiftHTML(r)}
+    </div>
+    <div class="card">
+      <div class="btn-row">
+        <button class="btn-ghost" data-act="edit-thought">${T.edit}</button>
+        <button class="btn-ghost danger" data-act="delete-thought">Smazat</button>
+      </div>
+      <p class="note">Zapsáno ${esc(M.formatDate(r.day))} v ${M.formatTime(r.createdAt)}</p>
+    </div>`;
+}
+
+async function persistThought() {
+  const r = state.thought;
+  if (!r || !TH.isValid(r)) return;
+  r.updatedAt = new Date().toISOString();
+  try {
+    const id = await db.putThought(r);
+    if (r.id === undefined) r.id = id;
+  } catch (err) {
+    console.error('thought:', err);
+    toast(T.saveFail);
+  }
+}
+
+async function newThought() {
+  state.thought = TH.makeRecord(M.logicalToday());
+  state.thoughtStep = 0;
+  state.thoughtMode = 'edit';
+  await go('thought');
+}
+
+async function openThought(id) {
+  const r = await db.getThought(id);
+  if (!r) return;
+  state.thought = r;
+  state.thoughtMode = 'view';
+  await go('thought');
 }
 
 /* ── VÍCE ────────────────────────────────────────────────────── */
@@ -746,10 +1498,9 @@ async function renderMore() {
   const total = await db.countDays();
   state.totalDays = total;
   state.persisted = await db.isPersisted();
-
-  const crisis = T.crisis.map(([name, num, sub]) =>
-    `<a class="line" href="tel:${num.replace(/\s/g, '')}">
-       <span>${name}<span class="sub">${sub}</span></span><span>${num}</span></a>`).join('');
+  const nAssess = await db.countAssessments();
+  const nThoughts = await db.countThoughts();
+  const due = await dueInstruments();
 
   // Připomenutí zálohy. Nemá smysl otravovat od prvního dne, ale po dvou
   // týdnech už by ztráta dat mrzela.
@@ -761,20 +1512,33 @@ async function renderMore() {
   const backupCard = needsBackup ? `
     <div class="card accent">
       <div class="rowbetween">
-        <div style="min-width:0">
-          <b style="font-size:.9375rem">${T.backupTitle}</b>
-          <span style="display:block;font-size:.75rem;color:var(--muted);line-height:1.4;margin-top:.125rem">
-            ${daysSince === null ? T.backupNever : T.backupStale(daysSince)}</span>
+        <div>
+          <b>${T.backupTitle}</b>
+          <span class="note tight">${daysSince === null ? T.backupNever : T.backupStale(daysSince)}</span>
         </div>
-        <button class="btn-chip" data-act="export">↓</button>
+        <button class="btn-chip" data-act="export">Zálohovat</button>
       </div>
     </div>` : '';
 
   $('#more-body').innerHTML = backupCard + `
     <div class="card crisis">
       <span class="card-label" style="color:var(--orange)">${T.moreHelp}</span>
-      <p class="note" style="margin-top:0;margin-bottom:.25rem">${T.moreHelpBody}</p>
-      ${crisis}
+      <p class="note tight">${T.moreHelpBody}</p>
+      ${crisisLinesHTML()}
+    </div>
+
+    <div class="card">
+      <span class="card-label">Nástroje</span>
+      <div class="list">
+        <button data-act="go-instruments">
+          <span>Dotazníky<span class="sub">WHO-5 · PHQ-9 · GAD-7</span></span>
+          <span class="val ${due.length ? 'warn' : ''}">${due.length ? `${due.length} na řadě` : `${nAssess}`}</span>
+        </button>
+        <button data-act="go-thoughts">
+          <span>Záznam myšlenky<span class="sub">přerámování, osm kroků</span></span>
+          <span class="val">${nThoughts}</span>
+        </button>
+      </div>
     </div>
 
     <div class="card">
@@ -788,26 +1552,45 @@ async function renderMore() {
           <span>${T.moreImport}<span class="sub">${T.moreImportSub}</span></span>
           <span class="val">↑</span>
         </button>
-        <div style="display:flex;align-items:center;justify-content:space-between;
-                    gap:.75rem;min-height:3.25rem;padding:.625rem 0;border-bottom:1px solid #2E3040">
+        <div class="row">
           <span>${T.moreStorage}</span>
           <span class="val ${state.persisted ? 'ok' : 'warn'}">
             ${state.persisted ? T.moreStorageOn : T.moreStorageOff}</span>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;
-                    gap:.75rem;min-height:3.25rem;padding:.625rem 0">
+        <div class="row">
           <span>${T.moreEntries}</span>
-          <span class="val">${total}</span>
+          <span class="val big">${total}</span>
         </div>
       </div>
       ${state.persisted ? '' : `<p class="note">${T.moreStorageHint}</p>`}
     </div>
 
     <div class="card">
+      <span class="card-label">${T.moreSettings}</span>
+      <div class="list">
+        <button class="switch" data-act="toggle-amoled" aria-pressed="${state.amoled}">
+          <span class="t">${T.moreAmoled}<span class="sub">${T.moreAmoledSub}</span></span>
+          <span class="knob" aria-hidden="true"></span>
+        </button>
+        <button data-act="onboarding">
+          <span>${T.moreOnboarding}<span class="sub">${T.moreOnboardingSub}</span></span>
+          <span class="val">›</span>
+        </button>
+      </div>
+      <span class="card-label mt-4">${T.moreAddress}</span>
+      <div class="segmented" role="group" aria-label="${T.moreAddress}">
+        <button data-address="neutral" aria-pressed="${state.address === 'neutral'}">${T.addressNeutral}</button>
+        <button data-address="m" aria-pressed="${state.address === 'm'}">${T.addressM}</button>
+        <button data-address="f" aria-pressed="${state.address === 'f'}">${T.addressF}</button>
+      </div>
+      <p class="note">${T.addressHint}</p>
+    </div>
+
+    <div class="card">
       <span class="card-label">${T.moreTags}</span>
       <div class="chips">${active(state.tags).map((t) =>
-        `<span class="chip static">${t.label}<button class="x" data-rmtag="${t.id}"
-           aria-label="${T.remove} ${t.label}">×</button></span>`).join('')}</div>
+    `<span class="chip static">${esc(t.label)}<button class="x" data-rmtag="${esc(t.id)}"
+           aria-label="${T.remove} ${esc(t.label)}">×</button></span>`).join('')}</div>
       <div class="addrow">
         <input type="text" id="new-tag" placeholder="${T.namePlaceholder}" maxlength="24">
         <button class="btn-chip" data-act="add-tag">${T.addTag}</button>
@@ -818,10 +1601,10 @@ async function renderMore() {
     <div class="card">
       <span class="card-label">${T.moreMeds}</span>
       ${active(state.meds).length
-        ? `<div class="chips">${active(state.meds).map((m) =>
-            `<span class="chip static">${m.label}<button class="x" data-rmmed="${m.id}"
-               aria-label="${T.remove} ${m.label}">×</button></span>`).join('')}</div>`
-        : `<p class="note" style="margin-top:0">${T.medsNone}</p>`}
+    ? `<div class="chips">${active(state.meds).map((m) =>
+      `<span class="chip static">${esc(m.label)}<button class="x" data-rmmed="${esc(m.id)}"
+               aria-label="${T.remove} ${esc(m.label)}">×</button></span>`).join('')}</div>`
+    : `<p class="note tight">${T.medsNone}</p>`}
       <div class="addrow">
         <input type="text" id="new-med" placeholder="${T.namePlaceholder}" maxlength="32">
         <button class="btn-chip" data-act="add-med">${T.addMed}</button>
@@ -830,22 +1613,100 @@ async function renderMore() {
 
     <div class="card">
       <span class="card-label">${T.moreAbout}</span>
-      <p class="note" style="margin-top:0">Soumrak · ${T.moreVersion}<br>
+      <p class="note tight">Soumrak · ${T.moreVersion}<br>
         Data zůstávají v telefonu. Aplikace nikam nic neposílá.</p>
       <p class="note"><strong>${T.moreDisclaimer}</strong></p>
     </div>`;
 }
 
-/* ── export ──────────────────────────────────────────────────── */
+/* ── ÚVOD ────────────────────────────────────────────────────── */
+
+const ONB = [
+  {
+    h: 'Soumrak',
+    p: [
+      'Deník nálady na jeden večer denně. Zápis trvá čtvrt minuty a všechno pod ním je dobrovolné.',
+      'Smysl není mít vyplněno. Smysl je vidět po pár týdnech, co se opakuje — a to jde jen z toho, co se zapíše blízko po tom, co se stalo. Vzpomínka po měsíci je nespolehlivá.',
+      '<strong>Soumrak není zdravotnický prostředek a nenahrazuje odbornou péči.</strong> Krizové linky jsou trvale ve Více → Když je zle, nezávisle na tom, co ukazují grafy.'
+    ]
+  },
+  {
+    h: 'Dvě osy, ne jedna',
+    p: [
+      'Nálada se měří zvlášť na dvou škálách: jak <strong>příjemný</strong> den byl (−3 až +3) a kolik v něm bylo <strong>energie</strong> (1 až 5).',
+      'Jedna osa by sloučila vyčerpanou skleslost s napjatým neklidem. To jsou dva různé stavy a dělá se s nimi něco jiného. Proto je tu i úzkost zvlášť.',
+      'Škála má poctivý střed. Nula je platná odpověď, ne vyhýbání — nutit se na plochý den k náklonu na jednu stranu je chyba měření.'
+    ]
+  },
+  {
+    h: 'Čemu se aplikace vyhýbá',
+    p: [
+      '<strong>Žádná série dnů.</strong> Vynechaný den je chybějící údaj, ne selhání. V hlavičce stojí „zapsáno 27 z 30", ne přetržený řetěz.',
+      '<strong>Včerejšek se ukáže až po uložení.</strong> Kdyby svítil dřív, fungoval by jako kotva a dnešek by se k němu přitáhl.',
+      '<strong>Poznámka má strop 280 znaků.</strong> Otevřené večerní psaní je u deprese známý spouštěč přemílání. Jedna konkrétní věta pomáhá víc než odstavec.',
+      '<strong>Žádná statistika, dokud na ni nejsou data.</strong> Průměr ze šesti dní se nezobrazí.'
+    ]
+  },
+  {
+    h: 'Dvě praktické věci',
+    p: [
+      '<strong>Připomenutí neumíme.</strong> Webová aplikace na Androidu nedokáže spolehlivě naplánovat oznámení. Založ si opakovaný budík v hodinách telefonu na čas, kdy chceš zapisovat. Je to neelegantní a spustí se to vždycky.',
+      '<strong>Zálohuj jednou za měsíc.</strong> Více → Export do JSON. Prohlížeč není trezor; při nedostatku místa může systém data smazat.'
+    ],
+    address: true
+  }
+];
+
+function renderOnboarding() {
+  const el = $('#onboarding');
+  const step = ONB[state.onbStep];
+  const last = state.onbStep === ONB.length - 1;
+
+  el.innerHTML = `
+    <div class="steps" aria-hidden="true">${ONB.map((_, i) =>
+    `<i data-on="${i === state.onbStep}" data-done="${i < state.onbStep}"></i>`).join('')}</div>
+    <div class="onb-body">
+      <h2>${step.h}</h2>
+      ${step.p.map((p) => `<p>${p}</p>`).join('')}
+      ${step.address ? `
+        <span class="card-label mt-4">${T.moreAddress}</span>
+        <div class="segmented" role="group" aria-label="${T.moreAddress}">
+          <button data-address="neutral" aria-pressed="${state.address === 'neutral'}">${T.addressNeutral}</button>
+          <button data-address="m" aria-pressed="${state.address === 'm'}">${T.addressM}</button>
+          <button data-address="f" aria-pressed="${state.address === 'f'}">${T.addressF}</button>
+        </div>
+        <p class="note">${T.addressHint}</p>` : ''}
+    </div>
+    <div class="onb-foot">
+      <button class="btn-ghost" data-onb="back" ${state.onbStep === 0 ? 'hidden' : ''}>Zpět</button>
+      <button class="btn-save" data-onb="next">${last ? 'Začít' : 'Dál'}</button>
+    </div>`;
+  el.hidden = false;
+}
+
+async function finishOnboarding() {
+  await db.setMeta('onboardedAt', new Date().toISOString());
+  $('#onboarding').hidden = true;
+  $('#app').hidden = false;
+  history.replaceState({ screen: 'today' }, '');
+  await go('today', false);
+}
+
+/* ── export a obnova ─────────────────────────────────────────── */
 
 async function exportJSON() {
   try {
-    const days = await db.allDays();
     const payload = {
       app: 'soumrak',
       schemaVersion: M.SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
-      days
+      days: await db.allDays(),
+      assessments: await db.allAssessments(),
+      thoughts: await db.allThoughts(),
+      // Popisky štítků a léků patří do zálohy: bez nich by se v obnovené
+      // historii místo „Alkohol" ukazovalo holé id.
+      tags: state.tags,
+      meds: state.meds
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -859,7 +1720,8 @@ async function exportJSON() {
     await db.setMeta('lastBackupAt', new Date().toISOString());
     toast(T.exportOk);
     renderMore();
-  } catch {
+  } catch (err) {
+    console.error('export:', err);
     toast(T.exportFail);
   }
 }
@@ -871,8 +1733,9 @@ async function exportJSON() {
  */
 async function importJSON(file) {
   try {
-    const days = M.parseBackup(JSON.parse(await file.text()));
-    if (!days) {
+    const data = JSON.parse(await file.text());
+    const parsed = M.parseBackup(data);
+    if (!parsed) {
       toast(T.importBadFile);
       return;
     }
@@ -880,17 +1743,52 @@ async function importJSON(file) {
     const existing = new Set((await db.allDays()).map((e) => e.day));
     const toAdd = [];
     let kept = 0;
-    for (const e of days) {
+    for (const e of parsed.days) {
       if (existing.has(e.day)) { kept++; continue; }
       toAdd.push(e);
     }
-
     if (toAdd.length) await db.putDays(toAdd);
-    toast(T.importOk(toAdd.length, kept));
+
+    // Dotazníky a záznamy myšlenek se poznají podle času vyplnění, ne podle
+    // dne — za jeden den jich může být víc.
+    const haveA = new Set((await db.allAssessments()).map((a) => a.instrument + '|' + a.takenAt));
+    const newA = parsed.assessments.filter((a) => !haveA.has(a.instrument + '|' + a.takenAt));
+    if (newA.length) await db.putAssessments(newA.map(({ id, ...rest }) => rest));
+
+    const haveT = new Set((await db.allThoughts()).map((t) => t.createdAt));
+    const newT = parsed.thoughts.filter((t) => !haveT.has(t.createdAt));
+    if (newT.length) await db.putThoughts(newT.map(({ id, ...rest }) => rest));
+
+    await mergeNamedLists(data);
+
+    let msg = T.importOk(toAdd.length, kept);
+    const extra = [];
+    if (newA.length) extra.push(T.importAssessments(newA.length));
+    if (newT.length) extra.push(T.importThoughts(newT.length));
+    if (extra.length) msg += ' · ' + extra.join(', ');
+    toast(msg);
+
     await renderMore();
   } catch (err) {
     console.error('import:', err);
     toast(T.importFail);
+  }
+}
+
+/** Doplní z zálohy štítky a léky, které v aplikaci nejsou — jinak by se
+    v obnovené historii ukazovala holá id. Existující se nepřepisují. */
+async function mergeNamedLists(data) {
+  for (const [key, list] of [['tags', state.tags], ['meds', state.meds]]) {
+    const incoming = Array.isArray(data[key]) ? data[key] : null;
+    if (!incoming) continue;
+    let changed = false;
+    for (const item of incoming) {
+      if (!item || typeof item.id !== 'string' || typeof item.label !== 'string') continue;
+      if (list.some((x) => x.id === item.id)) continue;
+      list.push({ id: item.id, label: item.label, ...(item.archived ? { archived: true } : {}) });
+      changed = true;
+    }
+    if (changed) await db.setSetting(key, list);
   }
 }
 
@@ -931,9 +1829,6 @@ async function addNamed(inputSel, key) {
   await renderMore();
 }
 
-/** Položky nabízené k výběru — archivované zůstávají jen pro čtení historie. */
-const active = (list) => list.filter((x) => !x.archived);
-
 function pickBackupFile() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -961,10 +1856,22 @@ async function persist() {
   }
 }
 
+/**
+ * Načte záznam a doplní ho na dnešní tvar modelu.
+ *
+ * Bez toho spadne obrazovka na každém dni zapsaném starší verzí aplikace:
+ * záznam z verze 1 nemá pole `emotions` ani `strategies` a souhrn si sáhne
+ * na `.length` čehosi, co neexistuje. Migrace úložiště přidá nová úložiště,
+ * ale uvnitř uložených objektů nic nemění — dorovnat tvar musí čtenář.
+ */
+function hydrate(raw) {
+  return raw ? (M.normalize(raw) || raw) : null;
+}
+
 async function loadDay(key) {
   state.targetDay = key;
-  state.entry = (await db.getDay(key)) || M.makeEntry(key);
-  state.yesterday = (await db.getDay(M.addDays(key, -1))) || null;
+  state.entry = hydrate(await db.getDay(key)) || M.makeEntry(key);
+  state.yesterday = hydrate(await db.getDay(M.addDays(key, -1)));
 }
 
 /* ── směrování ───────────────────────────────────────────────── */
@@ -974,13 +1881,27 @@ const RENDER = {
   calendar: renderCalendar,
   day: renderDay,
   insights: renderInsights,
+  instruments: renderInstruments,
+  quiz: renderQuiz,
+  thoughts: renderThoughts,
+  thought: renderThought,
   more: renderMore
 };
 
-/* Detail dne není záložka — v liště zůstane zvýrazněný kalendář, ze kterého se otevřel. */
-const TAB_FOR = { today: 'today', calendar: 'calendar', day: 'calendar', insights: 'insights', more: 'more' };
+/* Podřízené obrazovky nejsou záložky — v liště zůstane zvýrazněná ta,
+   ze které se otevřely. */
+const TAB_FOR = {
+  today: 'today', calendar: 'calendar', day: 'calendar', insights: 'insights',
+  more: 'more', instruments: 'more', quiz: 'more', thoughts: 'more', thought: 'more'
+};
 
-async function go(screen) {
+/** Kam vede tlačítko zpět v hlavičce, když není historie prohlížeče. */
+const PARENT = {
+  day: 'calendar', instruments: 'more', quiz: 'instruments',
+  thoughts: 'more', thought: 'thoughts'
+};
+
+async function go(screen, push = true) {
   state.screen = screen;
   for (const el of document.querySelectorAll('.screen')) {
     el.hidden = el.dataset.screen !== screen;
@@ -995,8 +1916,20 @@ async function go(screen) {
     const d = M.keyToDate(M.logicalToday());
     state.calMonth = { y: d.getFullYear(), m: d.getMonth() };
   }
+  // Historie prohlížeče drží systémové tlačítko Zpět. Bez toho by na
+  // Androidu první stisk zavřel celou aplikaci i z podobrazovky.
+  if (push) history.pushState({ screen }, '');
   await RENDER[screen]();
   document.querySelector(`[data-screen="${screen}"] .body`)?.scrollTo(0, 0);
+}
+
+/** Zpět: přednostně systémovou historií, jinak na nadřazenou obrazovku. */
+function goBack() {
+  if (history.state && history.state.screen && history.length > 1) {
+    history.back();
+    return;
+  }
+  go(PARENT[state.screen] || 'today');
 }
 
 /* ── události ────────────────────────────────────────────────── */
@@ -1009,7 +1942,16 @@ function wire() {
     go(b.dataset.go);
   });
 
-  // Formulář i souhrn se překreslují, proto delegace na celé obrazovce.
+  for (const b of document.querySelectorAll('[data-back]')) {
+    b.addEventListener('click', () => { haptic(6); goBack(); });
+  }
+
+  window.addEventListener('popstate', (e) => {
+    const screen = (e.state && e.state.screen) || 'today';
+    go(screen, false);
+  });
+
+  /* ── obrazovka Dnes ──────────────────────────────────────── */
   $('#screen-today').addEventListener('click', async (e) => {
     const moodBtn = e.target.closest('.mood');
     if (moodBtn) {
@@ -1052,12 +1994,16 @@ function wire() {
       return;
     }
 
-    const helpedBtn = e.target.closest('[data-helped]');
-    if (helpedBtn) {
-      const id = helpedBtn.dataset.helped;
-      const i = state.entry.helped.indexOf(id);
-      if (i >= 0) state.entry.helped.splice(i, 1);
-      else state.entry.helped.push(id);
+    const toggleList = [
+      ['data-helped', 'helped'], ['data-emotion', 'emotions'], ['data-strategy', 'strategies']
+    ];
+    for (const [attr, field] of toggleList) {
+      const btn = e.target.closest(`[${attr}]`);
+      if (!btn) continue;
+      const id = btn.getAttribute(attr);
+      const arr = state.entry[field];
+      const i = arr.indexOf(id);
+      if (i >= 0) arr.splice(i, 1); else arr.push(id);
       haptic();
       await persist();
       renderTodayForm($('#today-body'));
@@ -1099,6 +2045,16 @@ function wire() {
       case 'toggle-more':
         state.showTier2 = !state.showTier2;
         renderTodayForm($('#today-body'));
+        break;
+      case 'toggle-emotions':
+        state.showEmotions = !state.showEmotions;
+        renderTodayForm($('#today-body'));
+        break;
+      case 'start-quiz':
+        await startQuiz(act.dataset.instrument);
+        break;
+      case 'new-thought':
+        await newThought();
         break;
       case 'sleep-up':
       case 'sleep-down': {
@@ -1143,16 +2099,35 @@ function wire() {
     toast(T.saved);
   });
 
+  /* ── kalendář ────────────────────────────────────────────── */
   $('#calendar-body').addEventListener('click', (e) => {
     const cell = e.target.closest('.cal[data-day]');
-    if (!cell || cell.classList.contains('future')) return;
+    if (!cell) return;
     haptic(6);
     openDay(cell.dataset.day);
   });
 
-  $('#day-back').addEventListener('click', () => { haptic(6); go('calendar'); });
+  $('#cal-prev').addEventListener('click', () => {
+    const { y, m } = state.calMonth;
+    state.calMonth = m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 };
+    haptic(6);
+    renderCalendar();
+  });
+  $('#cal-next').addEventListener('click', () => {
+    const { y, m } = state.calMonth;
+    state.calMonth = m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 };
+    haptic(6);
+    renderCalendar();
+  });
 
+  /* ── detail dne ──────────────────────────────────────────── */
   $('#screen-day').addEventListener('click', async (e) => {
+    const openTh = e.target.closest('[data-open-thought]');
+    if (openTh) {
+      haptic(6);
+      await openThought(Number(openTh.dataset.openThought));
+      return;
+    }
     const act = e.target.closest('[data-act]');
     if (!act) return;
     const key = state.dayViewKey;
@@ -1179,19 +2154,7 @@ function wire() {
     }
   });
 
-  $('#cal-prev').addEventListener('click', () => {
-    const { y, m } = state.calMonth;
-    state.calMonth = m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 };
-    haptic(6);
-    renderCalendar();
-  });
-  $('#cal-next').addEventListener('click', () => {
-    const { y, m } = state.calMonth;
-    state.calMonth = m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 };
-    haptic(6);
-    renderCalendar();
-  });
-
+  /* ── přehled ─────────────────────────────────────────────── */
   $('#screen-insights').addEventListener('click', async (e) => {
     const rangeBtn = e.target.closest('[data-range]');
     if (rangeBtn) {
@@ -1220,6 +2183,147 @@ function wire() {
     }
   });
 
+  /* ── dotazníky ───────────────────────────────────────────── */
+  $('#screen-instruments').addEventListener('click', async (e) => {
+    const start = e.target.closest('[data-act="start-quiz"]');
+    if (start) { await startQuiz(start.dataset.instrument); return; }
+
+    const view = e.target.closest('[data-instrument-view]');
+    if (view) {
+      const id = view.dataset.instrumentView;
+      state.instrumentView = state.instrumentView === id ? null : id;
+      haptic(6);
+      await renderInstruments();
+    }
+  });
+
+  $('#screen-quiz').addEventListener('click', async (e) => {
+    const opt = e.target.closest('[data-opt]');
+    if (opt) { await answerQuiz(Number(opt.dataset.opt)); return; }
+
+    const act = e.target.closest('[data-act]');
+    if (act && act.dataset.act === 'quiz-done') {
+      state.quiz = null;
+      state.instrumentView = null;
+      await go('instruments');
+    }
+  });
+
+  $('#quiz-next').addEventListener('click', async () => {
+    const q = state.quiz;
+    if (!q) return;
+    const def = INS.INSTRUMENTS[q.instrument];
+    if (q.index < def.items.length - 1) {
+      q.index += 1;
+      haptic(6);
+      renderQuiz();
+      await saveQuizDraft();
+      return;
+    }
+    await finishQuiz();
+  });
+
+  /* ── záznam myšlenky ─────────────────────────────────────── */
+  $('#screen-thoughts').addEventListener('click', async (e) => {
+    const open = e.target.closest('[data-open-thought]');
+    if (open) { haptic(6); await openThought(Number(open.dataset.openThought)); return; }
+    const act = e.target.closest('[data-act]');
+    if (act && act.dataset.act === 'new-thought') await newThought();
+  });
+
+  $('#screen-thought').addEventListener('click', async (e) => {
+    const r = state.thought;
+
+    for (const [attr, field] of [['data-tr-emotion', 'emotions'], ['data-tr-distortion', 'distortions']]) {
+      const btn = e.target.closest(`[${attr}]`);
+      if (!btn) continue;
+      const id = btn.getAttribute(attr);
+      const i = r[field].indexOf(id);
+      if (i >= 0) r[field].splice(i, 1); else r[field].push(id);
+      haptic();
+      await persistThought();
+      renderThought();
+      return;
+    }
+
+    const act = e.target.closest('[data-act]');
+    if (!act) return;
+    switch (act.dataset.act) {
+      case 'edit-thought':
+        state.thoughtMode = 'edit';
+        state.thoughtStep = 0;
+        renderThought();
+        break;
+      case 'delete-thought':
+        if (!confirm('Smazat tento záznam myšlenky?')) return;
+        if (r.id !== undefined) await db.deleteThought(r.id);
+        state.thought = null;
+        haptic(14);
+        toast('Záznam smazán');
+        await go('thoughts');
+        break;
+    }
+  });
+
+  let trTimer = null;
+  $('#screen-thought').addEventListener('input', (e) => {
+    const r = state.thought;
+    if (!r) return;
+
+    const field = e.target.getAttribute('data-tr-field');
+    if (field) {
+      r[field] = e.target.value;
+      clearTimeout(trTimer);
+      trTimer = setTimeout(persistThought, 500);
+      return;
+    }
+
+    const rangeField = e.target.getAttribute('data-range-field');
+    if (rangeField) {
+      const v = Number(e.target.value);
+      r[rangeField] = v;
+      const out = document.querySelector(`[data-range-val="${rangeField}"]`);
+      if (out) out.textContent = v;
+      // Přepočítat jen přehled posunu, ne celý krok — překreslení formuláře
+      // by pod prstem zrušilo tažení posuvníku.
+      const shiftBox = document.getElementById('tr-shift');
+      if (shiftBox) shiftBox.innerHTML = shiftHTML(r);
+      clearTimeout(trTimer);
+      trTimer = setTimeout(persistThought, 400);
+    }
+  });
+
+  $('#thought-prev').addEventListener('click', async () => {
+    haptic(6);
+    if (state.thoughtStep === 0) {
+      await persistThought();
+      // Prázdný rozepsaný záznam se neukládá, aby v historii nezůstávaly slupky.
+      goBack();
+      return;
+    }
+    state.thoughtStep -= 1;
+    renderThought();
+  });
+
+  $('#thought-next').addEventListener('click', async () => {
+    haptic(6);
+    await persistThought();
+    if (state.thoughtStep < TH.STEPS.length - 1) {
+      state.thoughtStep += 1;
+      renderThought();
+      return;
+    }
+    if (!TH.isValid(state.thought)) {
+      toast('Zatím není co uložit — chybí situace i myšlenka.');
+      return;
+    }
+    state.thoughtMode = 'view';
+    haptic(14);
+    toast('Záznam uložen');
+    renderThought();
+  });
+
+  /* ── více ────────────────────────────────────────────────── */
   $('#screen-more').addEventListener('click', async (e) => {
     // Odebrání = archivace. Kdyby se položka smazala, starší zápisy by místo
     // „Alkohol" ukazovaly holé id `alcohol`. Popisek musí historii přežít.
@@ -1242,6 +2346,15 @@ function wire() {
       return;
     }
 
+    const addr = e.target.closest('[data-address]');
+    if (addr) {
+      state.address = addr.dataset.address;
+      await db.setSetting('address', state.address);
+      haptic(6);
+      await renderMore();
+      return;
+    }
+
     const b = e.target.closest('[data-act]');
     if (!b) return;
     switch (b.dataset.act) {
@@ -1249,7 +2362,47 @@ function wire() {
       case 'import': pickBackupFile(); break;
       case 'add-tag': await addNamed('#new-tag', 'tags'); break;
       case 'add-med': await addNamed('#new-med', 'meds'); break;
+      case 'go-instruments': state.instrumentView = null; await go('instruments'); break;
+      case 'go-thoughts': await go('thoughts'); break;
+      case 'toggle-amoled':
+        state.amoled = !state.amoled;
+        applyAmoled();
+        await db.setSetting('amoled', state.amoled);
+        haptic(6);
+        await renderMore();
+        break;
+      case 'onboarding':
+        state.onbStep = 0;
+        $('#app').hidden = true;
+        renderOnboarding();
+        break;
     }
+  });
+
+  /* ── úvod ────────────────────────────────────────────────── */
+  $('#onboarding').addEventListener('click', async (e) => {
+    const addr = e.target.closest('[data-address]');
+    if (addr) {
+      state.address = addr.dataset.address;
+      await db.setSetting('address', state.address);
+      haptic(6);
+      renderOnboarding();
+      return;
+    }
+    const b = e.target.closest('[data-onb]');
+    if (!b) return;
+    haptic(6);
+    if (b.dataset.onb === 'back') {
+      state.onbStep = Math.max(0, state.onbStep - 1);
+      renderOnboarding();
+      return;
+    }
+    if (state.onbStep < ONB.length - 1) {
+      state.onbStep += 1;
+      renderOnboarding();
+      return;
+    }
+    await finishOnboarding();
   });
 
   // Návrat po delší době: den se mohl přehoupnout, formulář musí patřit
@@ -1264,6 +2417,12 @@ function wire() {
   });
 }
 
+function applyAmoled() {
+  document.documentElement.dataset.amoled = state.amoled ? 'true' : '';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', state.amoled ? '#000000' : '#282A36');
+}
+
 /* ── start ───────────────────────────────────────────────────── */
 
 async function main() {
@@ -1271,7 +2430,7 @@ async function main() {
     await loadDay(M.logicalToday());
   } catch (err) {
     document.getElementById('boot').innerHTML =
-      `<p style="padding:2rem;text-align:center;color:#FF5555;font-size:.875rem">
+      `<p style="padding:2rem;text-align:center;color:#FF7B7B;font-size:.9375rem;line-height:1.6">
          Úložiště není dostupné.<br><br>
          Aplikace musí běžet z adresy http(s), ne ze souboru.<br>
          Viz README.
@@ -1286,13 +2445,31 @@ async function main() {
   state.tags = Array.isArray(savedTags) ? savedTags : DEFAULT_TAGS.slice();
   const savedMeds = await db.getSetting('meds', null);
   state.meds = Array.isArray(savedMeds) ? savedMeds : [];
+  state.address = await db.getSetting('address', 'neutral');
+  state.amoled = !!(await db.getSetting('amoled', false));
+  applyAmoled();
 
   wire();
-  document.getElementById('app').hidden = false;
   document.getElementById('boot').remove();
 
-  const params = new URLSearchParams(location.search);
-  await go(params.get('action') === 'quick' ? 'today' : 'today');
+  const onboarded = await db.getMeta('onboardedAt', null);
+  if (!onboarded) {
+    state.onbStep = 0;
+    renderOnboarding();
+  } else {
+    document.getElementById('app').hidden = false;
+    history.replaceState({ screen: 'today' }, '');
+    await go('today', false);
+
+    // Zkratka z dlouhého stisku ikony míří rovnou na škálu nálady.
+    if (new URLSearchParams(location.search).get('action') === 'quick') {
+      if (M.isValid(state.entry)) {
+        state.editing = true;
+        await renderToday();
+      }
+      document.getElementById('moodrow')?.scrollIntoView({ block: 'center' });
+    }
+  }
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW:', e));

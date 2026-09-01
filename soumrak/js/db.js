@@ -1,8 +1,8 @@
 /* IndexedDB — tenká obálka bez závislostí.
-   Úložiště: days (klíč = "YYYY-MM-DD"), settings, meta.
+   Úložiště: days (klíč = "YYYY-MM-DD"), assessments, thoughts, settings, meta.
    Verze schématu se zvyšuje jen v onupgradeneeded, aby šlo migrovat. */
 
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbName = 'soumrak';
 let _db = null;
@@ -24,10 +24,11 @@ function open() {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(dbName, DB_VERSION);
 
-    req.onupgradeneeded = (e) => {
+    req.onupgradeneeded = () => {
       const db = req.result;
-      // Fáze 1 zakládá jen to, co používá. Dotazníky přibudou ve verzi 2
-      // vlastním upgradem, existující dny se nesmí dotknout.
+
+      // Verze 1 — deník. Existující dny se při žádné pozdější migraci
+      // nesmí dotknout; nové úložiště se jen přidá vedle.
       if (!db.objectStoreNames.contains('days')) {
         db.createObjectStore('days', { keyPath: 'day' });
       }
@@ -37,7 +38,20 @@ function open() {
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'k' });
       }
-      void e;
+
+      // Verze 2 — dotazníky a záznamy myšlenek.
+      if (!db.objectStoreNames.contains('assessments')) {
+        const s = db.createObjectStore('assessments', { keyPath: 'id', autoIncrement: true });
+        // Složený index drží historii jednoho dotazníku rovnou seřazenou
+        // podle času, takže poslední vyplnění je čtení jednoho klíče.
+        s.createIndex('by_instrument', ['instrument', 'takenAt']);
+        s.createIndex('by_taken', 'takenAt');
+      }
+      if (!db.objectStoreNames.contains('thoughts')) {
+        const s = db.createObjectStore('thoughts', { keyPath: 'id', autoIncrement: true });
+        s.createIndex('by_day', 'day');
+        s.createIndex('by_created', 'createdAt');
+      }
     };
 
     req.onsuccess = () => {
@@ -101,6 +115,77 @@ export function countDays() {
   return tx('days', 'readonly', (s) => s.count());
 }
 
+/* ── dotazníky ───────────────────────────────────────────────── */
+
+/** Uloží vyplněný dotazník. Bez `id` se založí nový, s `id` se přepíše. */
+export function putAssessment(a) {
+  return tx('assessments', 'readwrite', (s) => s.put(a));
+}
+
+export function putAssessments(list) {
+  return tx('assessments', 'readwrite', (s) => {
+    for (const a of list) s.put(a);
+    return list.length;
+  });
+}
+
+export function deleteAssessment(id) {
+  return tx('assessments', 'readwrite', (s) => s.delete(id));
+}
+
+export function allAssessments() {
+  return tx('assessments', 'readonly', (s) => s.getAll());
+}
+
+/** Historie jednoho dotazníku, od nejstaršího. */
+export function assessmentsFor(instrument) {
+  return tx('assessments', 'readonly', (s) => s.index('by_instrument').getAll(
+    IDBKeyRange.bound([instrument, ''], [instrument, '￿'])
+  ));
+}
+
+/** Poslední vyplnění daného dotazníku, nebo undefined. */
+export function lastAssessment(instrument) {
+  return assessmentsFor(instrument).then((list) => list[list.length - 1]);
+}
+
+export function countAssessments() {
+  return tx('assessments', 'readonly', (s) => s.count());
+}
+
+/* ── záznamy myšlenek ────────────────────────────────────────── */
+
+export function putThought(r) {
+  return tx('thoughts', 'readwrite', (s) => s.put(r));
+}
+
+export function putThoughts(list) {
+  return tx('thoughts', 'readwrite', (s) => {
+    for (const r of list) s.put(r);
+    return list.length;
+  });
+}
+
+export function getThought(id) {
+  return tx('thoughts', 'readonly', (s) => s.get(id));
+}
+
+export function deleteThought(id) {
+  return tx('thoughts', 'readwrite', (s) => s.delete(id));
+}
+
+export function allThoughts() {
+  return tx('thoughts', 'readonly', (s) => s.getAll());
+}
+
+export function thoughtsForDay(day) {
+  return tx('thoughts', 'readonly', (s) => s.index('by_day').getAll(IDBKeyRange.only(day)));
+}
+
+export function countThoughts() {
+  return tx('thoughts', 'readonly', (s) => s.count());
+}
+
 /* ── nastavení a meta ────────────────────────────────────────── */
 
 export function getSetting(k, fallback = null) {
@@ -110,6 +195,10 @@ export function getSetting(k, fallback = null) {
 
 export function setSetting(k, v) {
   return tx('settings', 'readwrite', (s) => s.put({ k, v }));
+}
+
+export function allSettings() {
+  return tx('settings', 'readonly', (s) => s.getAll());
 }
 
 export function getMeta(k, fallback = null) {

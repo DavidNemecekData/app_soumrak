@@ -1,7 +1,7 @@
 /* Service worker — celá aplikace je statická, takže cache-first.
    Aktualizace se vydá zvýšením VERSION; starý cache se pak smaže. */
 
-const VERSION = 'soumrak-v6';
+const VERSION = 'soumrak-v7';
 
 /* Relativní cesty, aby aplikace fungovala i v podadresáři
    (GitHub Pages servíruje na /nazev-repozitare/). */
@@ -14,6 +14,8 @@ const ASSETS = [
   './js/db.js',
   './js/model.js',
   './js/stats.js',
+  './js/instruments.js',
+  './js/thoughts.js',
   './js/strings.cs.js',
   './icons/icon-192.png',
   './icons/icon-512.png',

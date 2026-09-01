@@ -1,4 +1,4 @@
-# Soumrak — fáze 1 až 3
+# Soumrak
 
 Deník nálady. Offline PWA, žádný backend, žádné závislosti.
 Data zůstávají v telefonu (IndexedDB) a nikam se neodesílají.
@@ -9,14 +9,45 @@ Data zůstávají v telefonu (IndexedDB) a nikam se neodesílají.
 
 **Zápis dne**
 
-- Nálada −3…+3 se slovními kotvami, energie a úzkost 1–5
+- Nálada −3…+3 se slovními kotvami u každého stupně, energie a úzkost 1–5
+  — u pětistupňových škál jsou popsané **všechny stupně, ne jen okraje**;
+  jen popsané konce vedou k driftu škály
 - Živý kvadrant Russellova cirkumplexu z nálady a energie
 - Spánek: hodiny po půlhodinách a kvalita 1–5
-- Štítky a k nim **„co z toho pomohlo"** — spojení činnosti a nálady je u deprese
-  účinná složka, ne ozdoba
-- Za tlačítkem *Přidat víc*: léky a poznámka se stropem 280 znaků
+- **Slovník emocí** — 26 pojmenovaných pocitů ve čtyřech kvadrantech.
+  Odlišit úzkost od podrážděnosti pomáhá zvolit jinou reakci
+- **Strategie zvládání** — co dnes pomáhalo. Postupy s krátkodobou úlevou
+  jsou označené, ne schované
+- Štítky a k nim „co z toho pomohlo" — spojení činnosti a nálady je
+  u deprese účinná složka, ne ozdoba
+- Za tlačítkem *Přidat víc*: strategie, léky a poznámka se stropem 280 znaků
 - Průběžné ukládání po každém ťuknutí; telefonát uprostřed zápisu nic nestojí
 - Platný záznam vznikne už samotnou náladou, zbytek je dobrovolný
+
+**Dotazníky**
+
+- **WHO-5** (týdně), **PHQ-9** a **GAD-7** (po 14 dnech) v ověřených
+  formulacích a s oficiálními možnostmi odpovědí
+- Vyhodnocovací okno se nezkracuje — kratší okno by dalo číslo, které
+  se s publikovanými normami srovnat nedá
+- Pásma závažnosti s vysvětlením, **nikdy diagnóza**
+- Práh spolehlivé změny: rozdíl pod 5 body (PHQ-9) nebo 4 body (GAD-7)
+  se nevydává za posun
+- **Položka 9 PHQ-9**: jakákoli odpověď mimo „Vůbec ne" vyvolá klidnou,
+  neblokující kartu s krizovými linkami hned za skóre
+- Historie se stupňovitým grafem nad pruhy závažnosti a tabulkou
+- Rozepsaný dotazník přežije zavření aplikace
+
+**Záznam myšlenky (kognitivní přerámování)**
+
+- Osm kroků podle Beckova záznamu automatických myšlenek
+- Situace → pocity a jejich síla → myšlenka a míra přesvědčení →
+  kognitivní zkreslení → důkazy pro → důkazy proti → vyvážená verze →
+  **přeměření**
+- Bez přeměření se nedá poznat, jestli to k něčemu bylo; posun se ukazuje
+  živě už při tažení posuvníku
+- Ukládá se průběžně, dá se kdykoli přerušit a vrátit se
+- Záznamy se vážou ke dni a jsou vidět i v detailu dne
 
 **Čtení a opravy**
 
@@ -29,26 +60,45 @@ Data zůstávají v telefonu (IndexedDB) a nikam se neodesílají.
 
 **Přehled**
 
-- Období 30 dní / 90 dní / rok. Rok se slučuje po týdnech — 365 bodů na šířku
-  telefonu je kaše, týdenní průměry se dají přečíst
-- Průměr a graf až od 7 zápisů; pod polovinou zapsaných dní se přidá upozornění,
-  že z toho průměr vychází opatrně
+- Období 30 dní / 90 dní / rok. Rok se slučuje po týdnech
+- Průměr a graf až od 7 zápisů; pod polovinou zapsaných dní se přidá
+  upozornění, že z toho průměr vychází opatrně
 - Ťuknutím do grafu se vypíše konkrétní den nebo týden
-- Rozložení hodnot: kolikrát padl který stupeň škály, s počtem i podílem
+- Rozložení hodnot: kolikrát padl který stupeň škály
 - Pod každým grafem je **tabulka** — graf nesmí být jediná cesta k datům
-- Kalendář má pod mřížkou shrnutí měsíce: kolik dní je zapsáno, nejlepší a nejhorší
+- Karta **Jak to číst**: co z grafu plyne a co ne
 
-**Data**
-- Export do JSON a **obnova ze zálohy** (nedestruktivní — doplní jen chybějící dny)
-- Připomenutí zálohy po 14 zápisech, když záloha chybí nebo je starší 30 dní
+**Data a nastavení**
+
+- Export do JSON včetně dotazníků, záznamů myšlenek i popisků štítků
+- **Obnova ze zálohy** — nedestruktivní, doplní jen chybějící
+- Připomenutí zálohy po 14 zápisech
 - Vlastní štítky a léky; odebrané se archivují, takže popisek v historii zůstane
+- Rod v dotazníku WHO-5 (neutrální / mužský / ženský)
+- Tmavší pozadí pro AMOLED
 - Krizové linky trvale ve *Více*, nezávisle na tom, co ukazují grafy
 
 ### Co ještě není
 
-Dotazníky PHQ-9 / GAD-7 / WHO-5 (fáze 4), souvislosti mezi spánkem, štítky
-a náladou včetně dnů v týdnu (fáze 5), zámek aplikace, zpráva pro lékaře,
-režim AMOLED a bezbariérová paleta (fáze 6).
+Souvislosti mezi spánkem, štítky a náladou včetně dnů v týdnu (fáze 5),
+zámek aplikace, zpráva pro lékaře a bezbariérová paleta (fáze 6).
+
+---
+
+## Přístupnost a čitelnost
+
+Tři pravidla, která drží `app.css` a která se nesmí obcházet:
+
+1. **Žádný text pod 12 px.** Kotvy škály měly 8,5 px; na telefonu
+   ve večerním světle to nešlo přečíst.
+2. **Kontrast aspoň 4,5 : 1** na podkladu, na kterém text leží.
+   Barva `--muted` (#6272A4) má 3,0 : 1 a přestala být barvou písma —
+   zůstává na linky a obrysy.
+3. **Každá mřížka má sloupce `minmax(0,1fr)`, ne `1fr`.** Prosté `1fr`
+   je `minmax(auto,1fr)` a odmítá se zúžit pod obsah; právě tím přetékala
+   řada nálady a čísla krizových linek mizela za pravým okrajem displeje.
+
+Ověřeno na 320, 375 a 393 px šířky, i při zvětšení písma v One UI na 125 %.
 
 ---
 
@@ -59,8 +109,9 @@ režim AMOLED a bezbariérová paleta (fáze 6).
 ```
 
 Otevři tu adresu na tom zařízení, kde aplikace poběží — **na telefonu, ne jen
-na počítači**. Projde datum a přechody na letní čas, model záznamu, statistiku,
-databázi i celý okruh záloha → ztráta dat → obnova. Testy běží nad oddělenou
+na počítači**. Projde datum a přechody na letní čas, model záznamu, texty
+a kotvy, statistiku, dotazníky, záznam myšlenky, databázi, migraci z verze 1
+i celý okruh záloha → ztráta dat → obnova. Testy běží nad oddělenou
 databází, ostrých záznamů se nedotknou.
 
 ---
@@ -69,6 +120,12 @@ databází, ostrých záznamů se nedotknou.
 
 ```bash
 node serve.js
+```
+
+Bez Node.js posluž totéž Pythonem:
+
+```bash
+python serve.py
 ```
 
 Otevře se na `http://localhost:5173`.
@@ -86,12 +143,6 @@ Otevře se na `http://localhost:5173`.
 nejsou dostupné a každý zápis by se při zavření ztratil. Potřebuje adresu
 `https://`.
 
-### Netlify Drop — nejrychlejší cesta
-
-1. Otevři <https://app.netlify.com/drop>
-2. Přetáhni tam **složku `soumrak/`** (ne celý `app_mood/`)
-3. Dostaneš adresu typu `https://neco-nahodneho.netlify.app`
-
 ### GitHub Pages
 
 1. Nahraj obsah složky `soumrak/` do repozitáře
@@ -99,6 +150,11 @@ nejsou dostupné a každý zápis by se při zavření ztratil. Potřebuje adres
 3. Adresa bude `https://uzivatel.github.io/nazev-repozitare/`
 
 Relativní cesty jsou v kódu všude, takže podadresář nevadí.
+
+### Netlify Drop
+
+1. Otevři <https://app.netlify.com/drop>
+2. Přetáhni tam **složku `soumrak/`** (ne celý `app_mood/`)
 
 ---
 
@@ -110,6 +166,9 @@ Relativní cesty jsou v kódu všude, takže podadresář nevadí.
 
 **Dlouhý stisk ikony** nabídne zkratku *Rychlý zápis*, která skočí rovnou
 na škálu nálady.
+
+Systémové tlačítko **Zpět** se chová jako v běžné aplikaci — vrací se
+po obrazovkách, nezavírá aplikaci z podobrazovky.
 
 ### Připomenutí
 
@@ -129,9 +188,8 @@ se stoprocentní jistotou.
   nedostatku místa smazat.
 - **Zálohuj jednou za měsíc:** *Více → Export do JSON*. Soubor spadne do
   složky Stažené, kterou OneDrive už synchronizuje.
-- **Obnova** je ve *Více → Obnovit ze zálohy*. Je nedestruktivní: doplní jen dny,
-  které v aplikaci chybí, a existující nikdy nepřepíše. Po ztrátě dat je
-  databáze prázdná, takže se obnoví všechno.
+- **Obnova** je ve *Více → Obnovit ze zálohy*. Je nedestruktivní: doplní jen
+  to, co v aplikaci chybí, a existující nikdy nepřepíše.
 
 ---
 
@@ -140,15 +198,17 @@ se stoprocentní jistotou.
 ```
 soumrak/
   index.html              kostra všech obrazovek
-  app.css                 tokeny, komponenty, bezpečné zóny
+  app.css                 tokeny, komponenty, mřížka, bezpečné zóny
   sw.js                   service worker, cache-first
   manifest.webmanifest    instalace, ikony, zkratka
   icons/                  192, 512 a maskable 512
   js/
-    db.js                 IndexedDB, hromadný zápis, trvalé úložiště
-    model.js              datum, model záznamu, normalizace, cirkumplex, barvy
+    db.js                 IndexedDB v2, migrace, hromadný zápis
+    model.js              datum, model záznamu, normalizace, escapování
     stats.js              průměr, klouzavý průměr, dělení na úseky
-    strings.cs.js         všechny české texty a výchozí štítky
+    instruments.js        WHO-5 / PHQ-9 / GAD-7: položky, skóre, pásma, termíny
+    thoughts.js           záznam myšlenky: kroky, zkreslení, posun
+    strings.cs.js         všechny české texty, kotvy, emoce, strategie
     ui.js                 obrazovky, směrování, vykreslování
   tests/                  autotest, nasazuje se s aplikací
 ```
@@ -156,9 +216,6 @@ soumrak/
 Klíče dat a názvy polí jsou anglicky, texty česky. Odebraný štítek se
 archivuje, nikdy nemaže — jinak by starší zápisy místo „Alkohol" ukazovaly
 holé id `alcohol`.
-
-Klíče dat a názvy polí jsou anglicky, texty česky. Přejmenování štítku tak
-nikdy neosiří historii.
 
 ---
 

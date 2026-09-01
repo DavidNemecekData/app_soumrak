@@ -64,9 +64,17 @@ matters in depression and anxiety.
 
 | Field | Scale | Anchors (CS) |
 |---|---|---|
-| `mood` (valence) | −3 … +3, 7 points, true neutral | Velmi špatný · Špatný · Spíš špatný · Neutrální · Spíš dobrý · Dobrý · Skvělý |
-| `energy` (arousal) | 1 … 5 | Vyčerpaný · Unavený · Normální · Svěží · Nabitý |
-| `anxiety` | 1 … 5 | Klid · Mírné napětí · Napětí · Silná úzkost · Panika |
+| `mood` (valence) | −3 … +3, 7 points, true neutral | velmi špatný · špatný · spíš špatný · neutrální · spíš dobrý · dobrý · skvělý |
+| `energy` (arousal) | 1 … 5 | vyčerpání · únava · běžná energie · svěžest · plná energie |
+| `anxiety` | 1 … 5 | klid · mírné napětí · napětí · silná úzkost · panika |
+| `sleep.quality` | 1 … 5 | mizerná · špatná · průměrná · dobrá · výborná |
+
+**Arousal anchors are nouns, not adjectives.** `Vyčerpaný` carries masculine
+gender; `vyčerpání` does not. Czech past participles cannot avoid gender, so
+WHO-5 items carry a `{m|f}` marker resolved from a setting — but the daily
+scales, which are read every evening, are phrased so the question never has to
+guess who is answering it. Naming the *state* rather than the person is also
+the better measurement.
 
 **Why 7 points for valence.** Reliability of a single-item scale rises to about
 7 categories and then plateaus; 5 (Daylio's faces) produces visible ceiling and
@@ -95,6 +103,11 @@ without them the app can only tell you what you already felt.
   Venku · Odpočinek · Konflikt · Nemoc · Alkohol · Káva · Samota · Tvorba ·
   Cestování · Peníze · Léky vynechány
 - **Note:** free text, soft-capped at 280 characters.
+- **Emotions:** optional, from a closed vocabulary of 26 labels grouped by
+  circumplex quadrant (`sadness`, `shame`, `anxiety`, `irritation`, `relief`,
+  `pride`, …).
+- **Strategies:** optional, from a closed list of 14 regulation strategies,
+  four of them flagged `shortTerm`.
 
 **The 280-character cap is deliberate.** Open-ended evening journaling is a known
 rumination trigger in depression. The prompt (`Jedna věta o dnešku…`) and the cap
@@ -106,6 +119,58 @@ enforced silently.
 the active ingredient of BA, one of the better-evidenced treatments for
 depression. The tag→mood association screen is therefore not a gimmick; it is the
 closest the app comes to an intervention.
+
+### 2.2b Emotion granularity and regulation strategies
+
+Valence and arousal locate a state; they do not name it. **Emotion
+differentiation** — the ability to tell anxiety from irritation from
+exhaustion — independently predicts better regulation and less maladaptive
+coping, because a differentiated label implies a different response. Two
+sliders cannot deliver that, so a closed vocabulary of 26 labels sits behind
+a disclosure on the entry screen, grouped by quadrant rather than
+alphabetically so the grouping teaches the model.
+
+Alongside it, a list of **regulation strategies** drawn from Gross's process
+model: reappraisal, problem-solving, acceptance, breathing, movement, social
+contact, pleasant activity, expression, self-care, distraction — plus
+avoidance, suppression, rumination and substance use, marked `shortTerm`.
+
+The flagged four are the point, not an oversight. They are the strategies that
+relieve immediately and maintain the problem over time; leaving them out of the
+list would not stop anyone using them, it would only stop anyone seeing it. The
+label reads `krátkodobá úleva`, and the accompanying line says plainly that
+some strategies help now and cost later. **No strategy is scored, ranked, or
+discouraged in copy.**
+
+### 2.2c Cognitive restructuring — the thought record
+
+Measurement changes nothing by itself. The thought record is the one place the
+app moves from tracking to doing, and it is the best-evidenced active
+ingredient available to a self-help tool.
+
+Eight steps, following the Beck automatic-thought record in the form used by
+*Mind Over Mood*:
+
+```
+1  Situace              what happened, camera-level, no evaluation
+2  Pocity + síla        emotion labels, intensity 0–100
+3  Myšlenka + víra      the hot thought, belief 0–100
+4  Zkreslení            optional; 11 named patterns
+5  Důkazy pro
+6  Důkazy proti         the hard column, and the one that does the work
+7  Vyvážená verze       not positive — more accurate
+8  Přeměření            belief and intensity again
+```
+
+Step 8 is non-negotiable. Without the re-rating there is no way to know whether
+the exercise did anything, and the app would be asking for fifteen minutes of
+effort on faith. Both numbers are seeded from the "before" values so the shift
+reads `0` rather than blank, and the shift panel updates live while the slider
+moves.
+
+The copy states that a small shift is the expected result and that the goal is
+not to defeat the thought but to stop treating it as the only possible account.
+Overclaiming here would be its own harm.
 
 ### 2.3 Validated instruments
 
@@ -158,7 +223,7 @@ These are the details that separate a measurement tool from a mood diary.
 |---|---|
 | **Anchoring** | Yesterday's rating is *never* shown before today's is entered. It appears immediately after saving. |
 | **Retrospective recall** | Backfill is allowed up to 7 days, but flagged `retrospective: true`, marked in the calendar with a hairline outline, and excludable from statistics via a settings toggle. |
-| **Scale drift** | Verbal anchors are always visible under the numbers, never on hover, never abbreviated to emoji alone. |
+| **Scale drift** | Verbal anchors are always visible under the numbers, never on hover, never abbreviated to emoji alone — **on every point of every scale, not only the endpoints.** A 1–5 scale labelled only at the ends leaves the middle to private interpretation, and that interpretation drifts over months. Long anchors carry a soft hyphen (U+00AD) so they wrap inside the grid column; the word itself is never shortened. |
 | **Peak–end effect** | The prompt asks for the day *overall*, and the note field prompts for one concrete thing — not "how do you feel now". |
 | **Reactivity** | Entry is short by design. No daily questionnaire. |
 | **Streak shame** | No unbroken-streak counter. The header reads `Zapsáno 27 z 30 dní`. A missed day is a missing data point, not a failure state. |
@@ -420,7 +485,7 @@ IndexedDB, four object stores, no dependencies (~40-line wrapper).
 ```js
 // store: days — keyPath "day"
 {
-  schemaVersion: 1,
+  schemaVersion: 2,
   day: "2026-07-30",          // local ISO date, the primary key
   createdAt: "2026-07-30T21:14:03+02:00",
   updatedAt: "2026-07-30T21:14:03+02:00",
@@ -432,11 +497,20 @@ IndexedDB, four object stores, no dependencies (~40-line wrapper).
   meds:   [{ id: "sertralin", taken: true }],
   tags:   ["work", "conflict", "poor_sleep"],
   note:   "…",                // ≤280
-  helped: ["walk"]            // "co dnes pomohlo"
+  helped: ["walk"],           // "co dnes pomohlo"
+  emotions:   ["shame","anxiety"],     // closed vocabulary, §2.2b
+  strategies: ["reappraisal","social"] // closed list, §2.2b
 }
 
-// store: assessments — autoIncrement, index [instrument, takenAt]
-{ id, instrument: "PHQ9"|"GAD7"|"WHO5", takenAt, items: [0,2,3,…], total, band }
+// store: assessments — autoIncrement, index [instrument, takenAt] + takenAt
+{ id, instrument: "PHQ9"|"GAD7"|"WHO5", takenAt, day, items: [0,2,3,…], total, band }
+
+// store: thoughts — autoIncrement, index day + createdAt
+{ id, schemaVersion, createdAt, updatedAt, day,
+  situation, emotions: [...], intensityBefore: 0–100,
+  thought, beliefBefore: 0–100, distortions: [...],
+  evidenceFor, evidenceAgainst, alternative,
+  beliefAfter: 0–100 | null, intensityAfter: 0–100 | null }
 
 // store: settings — single record
 { reminderTime: "21:00", lock: "pin"|"bio"|"off", amoled: false,
@@ -444,7 +518,7 @@ IndexedDB, four object stores, no dependencies (~40-line wrapper).
   address: "neutral"|"m"|"f", tags: [...], meds: [...] }
 
 // store: meta
-{ schemaVersion, lastBackupAt, installedAt, persistedStorage: true }
+{ schemaVersion, lastBackupAt, installedAt, onboardedAt, persistedStorage: true }
 ```
 
 Tag and med **ids are English and stable**; Czech labels live in a separate string
@@ -527,10 +601,10 @@ soumrak/
     db.js                  IndexedDB wrapper, migrations
     model.js               entry validation, derived fields
     stats.js               rolling mean, Spearman, permutation, bootstrap CI
-    instruments.js         PHQ-9 / GAD-7 / WHO-5 items, scoring, bands
-    charts.js              SVG renderers
-    ui.js                  screens, routing, gestures
-    strings.cs.js          every Czech string, one file
+    instruments.js         PHQ-9 / GAD-7 / WHO-5 items, scoring, bands, due dates
+    thoughts.js            thought-record steps, distortions, shift
+    ui.js                  screens, routing, SVG renderers
+    strings.cs.js          every Czech string, anchors, emotions, strategies
   sw.js                    precache app shell, cache-first
   manifest.webmanifest
   icons/                   192 · 512 · 512-maskable
@@ -541,7 +615,8 @@ soumrak/
 | **1 — Skeleton** ✅ | tokens, shell, tabs, IndexedDB, Tier 0 entry, install + offline | You can log a mood on the A55 with aeroplane mode on, close, reopen, and it is still there. |
 | **2 — Full entry** ✅ | Tiers 1–2, tags, sleep, day detail, edit, backfill | A complete day takes under a minute. |
 | **3 — Seeing it** ✅ | calendar heatmap, mood trend, distribution | The month is readable at a glance. |
-| **4 — Instruments** | PHQ-9 / GAD-7 / WHO-5, scheduling, band chart, item-9 safety card | Scores plot against severity bands. |
+| **4 — Instruments** ✅ | PHQ-9 / GAD-7 / WHO-5, scheduling, band chart, item-9 safety card | Scores plot against severity bands. |
+| **4b — Restructuring** ✅ | emotion vocabulary, regulation strategies, thought record, onboarding | A thought can be taken apart and re-rated in one sitting. |
 | **5 — Insight** | weekday, sleep lag, tag associations, all n-gates and CIs | No statistic appears before it is earned. |
 | **6 — Trust** | lock, export/import, clinician report, backup prompt, AMOLED + CVD modes | The data can leave and come back intact. |
 

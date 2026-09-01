@@ -6,8 +6,13 @@
 
 import * as db from '../js/db.js';
 import * as M from '../js/model.js';
+import * as INS from '../js/instruments.js';
+import * as TH from '../js/thoughts.js';
 import { mean, rollingMean, segments, seriesFor, distribution, buckets } from '../js/stats.js';
-import { T, MOOD_ANCHORS, MOOD_PHRASE, QUADRANT } from '../js/strings.cs.js';
+import {
+  T, MOOD_ANCHORS, MOOD_PHRASE, QUADRANT, ENERGY_ANCHORS, ANXIETY_ANCHORS,
+  SLEEPQ_ANCHORS, EMOTIONS, STRATEGIES, gender, hyphenate
+} from '../js/strings.cs.js';
 
 const TEST_DB = 'soumrak-selftest';
 
@@ -123,7 +128,8 @@ async function testModel() {
   await it('nový záznam má všechna pole pozdějších fází', () => {
     const e = M.makeEntry('2026-07-30');
     for (const k of ['schemaVersion','day','createdAt','updatedAt','retrospective',
-                     'mood','energy','anxiety','sleep','meds','tags','note','helped']) {
+                     'mood','energy','anxiety','sleep','meds','tags','note','helped',
+                     'emotions','strategies']) {
       ok(k in e, `chybí pole ${k}`);
     }
     eq(e.mood, null); eq(e.tags, []); eq(e.schemaVersion, M.SCHEMA_VERSION);
@@ -154,13 +160,23 @@ async function testModel() {
     ok(M.isRetrospective('2026-07-01', now), 'měsíc zpět je zpětný');
   });
 
-  await it('touch aktualizuje čas a příznak', () => {
+  await it('příznak zpětného zápisu se rozhoduje při vzniku záznamu', () => {
     // Všechny časy se předávají výslovně — test se nesmí opírat o systémové hodiny.
+    const same = M.makeEntry('2026-07-25', new Date(2026, 6, 25, 21, 30));
+    eq(same.retrospective, false, 'zápis v ten samý večer není zpětný');
+
+    const late = M.makeEntry('2026-07-25', new Date(2026, 6, 30, 21, 30));
+    eq(late.retrospective, true, 'záznam založený o pět dní později je zpětný');
+  });
+
+  await it('pozdější oprava záznamu z něj neudělá vzpomínku', () => {
+    // Kdyby se příznak počítal při každém uložení, stačilo by po týdnu
+    // opravit překlep a poctivě zapsaný den by se navždy tvářil jako doplněný.
     const e = M.makeEntry('2026-07-25', new Date(2026, 6, 25, 21, 30));
     const t1 = new Date(2026, 6, 30, 21, 0);
     M.touch(e, t1);
     eq(e.updatedAt, t1.toISOString(), 'updatedAt musí odpovídat předanému času');
-    eq(e.retrospective, true, 'starý den musí být zpětný');
+    eq(e.retrospective, false, 'oprava nesmí přepsat příznak');
 
     const t2 = new Date(2026, 6, 31, 9, 15);
     M.touch(e, t2);
@@ -206,6 +222,28 @@ async function testModel() {
     eq(e.anxiety, null);
     eq(e.schemaVersion, M.SCHEMA_VERSION);
     ok(e.createdAt && e.updatedAt, 'chybí razítka');
+  });
+
+  await it('záznam z verze 1 dostane pole, která tehdy neexistovala', () => {
+    // Regrese: souhrn dne sahal na e.emotions.length a na každém dni
+    // zapsaném starší verzí spadl. Migrace úložiště přidá nová úložiště,
+    // ale uvnitř uložených objektů nic nemění — dorovnat tvar musí čtenář.
+    const v1 = {
+      schemaVersion: 1, day: '2026-06-01', createdAt: '2026-06-01T19:00:00.000Z',
+      updatedAt: '2026-06-01T19:00:00.000Z', retrospective: false,
+      mood: -2, energy: 2, anxiety: 4,
+      sleep: { hours: 6, quality: 2, bedtime: null, wake: null },
+      meds: null, tags: ['work'], note: 'stará poznámka', helped: []
+    };
+    const e = M.normalize(v1);
+    eq(e.emotions, [], 'chybějící emotions:');
+    eq(e.strategies, [], 'chybějící strategies:');
+    // a nic z toho, co v záznamu bylo, se nesmí ztratit
+    eq(e.mood, -2); eq(e.energy, 2); eq(e.anxiety, 4);
+    eq(e.tags, ['work']); eq(e.note, 'stará poznámka');
+    eq(e.sleep.hours, 6); eq(e.sleep.quality, 2);
+    eq(e.createdAt, v1.createdAt, 'razítko vzniku se nesmí přepsat');
+    eq(e.retrospective, false, 'příznak se nesmí přepočítat');
   });
 
   await it('hodiny spánku se zaokrouhlují na půlhodiny a drží se v rozsahu', () => {
@@ -496,7 +534,7 @@ async function testDb() {
   });
 
   await it('parseBackup zahodí vadné dny a duplicity, zbytek zachová', () => {
-    const days = M.parseBackup({ app: 'soumrak', days: [
+    const { days } = M.parseBackup({ app: 'soumrak', days: [
       { day: '2026-07-01', mood: 1 },
       { day: 'nesmysl', mood: 1 },
       null,
@@ -524,7 +562,7 @@ async function testDb() {
       { day: '2026-09-03', mood: 2 }
     ]};
 
-    const parsed = M.parseBackup(backup);
+    const parsed = M.parseBackup(backup).days;
     const existing = new Set((await db.allDays()).map((e) => e.day));
     const toAdd = parsed.filter((e) => !existing.has(e.day));
     const kept = parsed.length - toAdd.length;
@@ -582,7 +620,7 @@ async function testDb() {
     eq(await db.countDays(), 0, 'databáze má být prázdná');
 
     // obnova
-    await db.putDays(M.parseBackup(exported));
+    await db.putDays(M.parseBackup(exported).days);
     const back = await db.allDays();
     eq(back.length, 40, 'počet dní:');
     eq(back.map((e) => e.mood), original.map((e) => e.mood), 'nálady:');
@@ -611,13 +649,393 @@ async function testDb() {
   db.useDatabase('soumrak');
 }
 
+/* ── texty a kotvy škál ──────────────────────────────────────── */
+
+async function testText() {
+  describe('Texty a kotvy');
+
+  await it('kotvy neobsahují nezlomitelnou mezeru', () => {
+    // Regrese: kotvy měly mezi slovy U+00A0. Text se pak nemohl zalomit,
+    // vytekl ze sloupce mřížky a všech sedm popisků splynulo v jednu řádku.
+    const NBSP = String.fromCharCode(0x00A0);
+    const all = [
+      ...Object.values(MOOD_ANCHORS), ...Object.values(MOOD_PHRASE),
+      ...ENERGY_ANCHORS, ...ANXIETY_ANCHORS, ...SLEEPQ_ANCHORS,
+      ...EMOTIONS.map((e) => e.label), ...STRATEGIES.map((x) => x.label)
+    ];
+    for (const t of all) {
+      ok(!t.includes(NBSP), `nezlomitelná mezera v "${t}"`);
+      ok(t.trim() === t, `přebytečná mezera v "${t}"`);
+      ok(t.length > 0, 'prázdná kotva');
+    }
+  });
+
+  await it('každý stupeň škály má kotvu i větu', () => {
+    for (let v = -3; v <= 3; v++) {
+      ok(MOOD_ANCHORS[String(v)], `chybí kotva pro ${v}`);
+      ok(MOOD_PHRASE[String(v)], `chybí věta pro ${v}`);
+    }
+    // Pět kotev, ne jen dva okraje — popsané jen konce vedou k driftu škály.
+    eq(ENERGY_ANCHORS.length, 5, 'energie:');
+    eq(ANXIETY_ANCHORS.length, 5, 'úzkost:');
+    eq(SLEEPQ_ANCHORS.length, 5, 'kvalita spánku:');
+  });
+
+  await it('měkký rozdělovník slovo nemění, jen ho umí zalomit', () => {
+    const SHY = String.fromCharCode(0x00AD);
+    for (const w of ['neutrální', 'vyčerpání', 'výborná', 'mizerná', 'průměrná']) {
+      const h = hyphenate(w);
+      ok(h.includes(SHY), `"${w}" se do sloupce nevejde, ale chybí rozdělovník`);
+      eq(h.split(SHY).join(''), w, `"${w}" po odstranění rozdělovníků:`);
+    }
+    eq(hyphenate('dobrý'), 'dobrý', 'krátké slovo se nechává být');
+    eq(hyphenate('spíš dobrý'), 'spíš dobrý');
+  });
+
+  await it('escapování ošetří všech pět znaků', () => {
+    eq(M.esc('<b>'), '&lt;b&gt;');
+    eq(M.esc('a & b'), 'a &amp; b');
+    eq(M.esc('"x"'), '&quot;x&quot;');
+    eq(M.esc("'x'"), '&#39;x&#39;');
+    eq(M.esc(null), ''); eq(M.esc(undefined), '');
+    // Ampersand musí jít první, jinak by z &lt; vzniklo &amp;lt;
+    eq(M.esc('<img onerror=x>'), '&lt;img onerror=x&gt;');
+  });
+
+  await it('rod se doplní podle nastavení', () => {
+    eq(gender('Cítil{|a} jsem se', 'm'), 'Cítil jsem se');
+    eq(gender('Cítil{|a} jsem se', 'f'), 'Cítila jsem se');
+    eq(gender('Cítil{|a} jsem se', 'neutral'), 'Cítil/a jsem se');
+    eq(gender('odpočat{ý|á}', 'f'), 'odpočatá');
+    eq(gender('odpočat{ý|á}', 'neutral'), 'odpočatý/á');
+    eq(gender('bez značky', 'f'), 'bez značky');
+  });
+}
+
+/* ── dotazníky ───────────────────────────────────────────────── */
+
+async function testInstruments() {
+  describe('Dotazníky');
+
+  await it('každý dotazník má tolik položek, kolik má mít', () => {
+    eq(INS.INSTRUMENTS.PHQ9.items.length, 9);
+    eq(INS.INSTRUMENTS.GAD7.items.length, 7);
+    eq(INS.INSTRUMENTS.WHO5.items.length, 5);
+    for (const id of INS.ORDER) {
+      const def = INS.INSTRUMENTS[id];
+      ok(def.items.every((t) => typeof t === 'string' && t.length > 5), `${id}: prázdná položka`);
+      ok(def.options.length >= 4, `${id}: málo možností`);
+      ok(def.stem.length > 10, `${id}: chybí úvodní otázka`);
+    }
+  });
+
+  await it('vyhodnocovací okno se nezkracuje', () => {
+    // Okno je součástí dotazníku. Týdenní PHQ-9 by tytéž dny počítal dvakrát.
+    eq(INS.INSTRUMENTS.PHQ9.everyDays, 14);
+    eq(INS.INSTRUMENTS.GAD7.everyDays, 14);
+    eq(INS.INSTRUMENTS.WHO5.everyDays, 7);
+  });
+
+  await it('WHO-5 se přepočítává na stovku', () => {
+    eq(INS.rawScore('WHO5', [5, 5, 5, 5, 5]), 25, 'hrubý skór:');
+    eq(INS.total('WHO5', [5, 5, 5, 5, 5]), 100, 'přepočtený:');
+    eq(INS.total('WHO5', [0, 0, 0, 0, 0]), 0);
+    eq(INS.total('WHO5', [2, 2, 2, 2, 2]), 40);
+  });
+
+  await it('částečný dotazník nemá skór', () => {
+    eq(INS.rawScore('PHQ9', [0, 1, 2]), null, 'málo položek:');
+    eq(INS.rawScore('PHQ9', [0, 1, 2, null, 0, 0, 0, 0, 0]), null, 'nevyplněná položka:');
+    eq(INS.total('PHQ9', [0, 1, 2]), null);
+    eq(INS.evaluate('PHQ9', [0, 1, 2]), null);
+    eq(INS.rawScore('neznamy', [0]), null, 'cizí dotazník:');
+  });
+
+  await it('pásma sedí na publikovaných hranicích', () => {
+    const b = (id, n) => INS.bandFor(id, n).key;
+    eq(b('PHQ9', 4), 'minimal'); eq(b('PHQ9', 5), 'mild');
+    eq(b('PHQ9', 9), 'mild');    eq(b('PHQ9', 10), 'mod');
+    eq(b('PHQ9', 14), 'mod');    eq(b('PHQ9', 15), 'modsev');
+    eq(b('PHQ9', 19), 'modsev'); eq(b('PHQ9', 20), 'severe');
+    eq(b('PHQ9', 27), 'severe');
+
+    eq(b('GAD7', 4), 'minimal'); eq(b('GAD7', 5), 'mild');
+    eq(b('GAD7', 14), 'mod');    eq(b('GAD7', 15), 'severe');
+
+    eq(b('WHO5', 28), 'low');    eq(b('WHO5', 29), 'mid');
+    eq(b('WHO5', 50), 'mid');    eq(b('WHO5', 51), 'ok');
+  });
+
+  await it('každé pásmo má popisek i vysvětlení a mluví o pásmu, ne o diagnóze', () => {
+    for (const id of INS.ORDER) {
+      for (const band of INS.INSTRUMENTS[id].bands) {
+        ok(band.label && band.hint, `${id}/${band.key}: chybí text`);
+        ok(/pásmo|pohoda/i.test(band.label), `${id}/${band.key}: popisek má mluvit o pásmu`);
+      }
+    }
+  });
+
+  await it('termín dalšího vyplnění vychází z vyhodnocovacího okna', () => {
+    const now = new Date(2026, 8, 15, 20, 0);
+    const d10 = new Date(2026, 8, 5, 20, 0).toISOString();
+    eq(INS.daysUntilDue('PHQ9', d10, now), 4, 'čtrnáctidenní:');
+    eq(INS.daysUntilDue('WHO5', d10, now), -3, 'týdenní už je po termínu:');
+    ok(!INS.isDue('PHQ9', d10, now), 'PHQ-9 ještě není na řadě');
+    ok(INS.isDue('WHO5', d10, now), 'WHO-5 už na řadě je');
+    eq(INS.daysUntilDue('PHQ9', null, now), null, 'nikdy nevyplněný nemá termín');
+    ok(INS.isDue('PHQ9', null, now), 'nikdy nevyplněný je na řadě');
+  });
+
+  await it('spolehlivá změna zná směr i práh', () => {
+    // PHQ-9: vyšší skór je horší, takže pokles je zlepšení.
+    eq(INS.reliableChange('PHQ9', 10, 14), null, 'rozdíl 4 nedosáhne prahu 5:');
+    const better = INS.reliableChange('PHQ9', 9, 15);
+    eq(better.diff, -6); eq(better.better, true, 'pokles PHQ-9 je zlepšení');
+    const worse = INS.reliableChange('PHQ9', 16, 10);
+    eq(worse.better, false, 'vzestup PHQ-9 je zhoršení');
+    eq(INS.reliableChange('GAD7', 6, 10).better, true, 'pokles GAD-7 je zlepšení');
+    eq(INS.reliableChange('PHQ9', 10, 'x'), null, 'chybějící minulý skór:');
+  });
+
+  await it('bezpečnostní karta se spustí jen položkou 9 v PHQ-9', () => {
+    eq(INS.SAFETY_ITEM.index, 8, 'položka 9 má index 8');
+    const zero = new Array(9).fill(0);
+    ok(!INS.triggersSafetyCard('PHQ9', zero), 'samé nuly kartu nespouští');
+    const flagged = zero.slice(); flagged[8] = 1;
+    ok(INS.triggersSafetyCard('PHQ9', flagged), 'jednička u položky 9 kartu spustí');
+    const other = zero.slice(); other[0] = 3;
+    ok(!INS.triggersSafetyCard('PHQ9', other), 'jiná položka kartu nespouští');
+    ok(!INS.triggersSafetyCard('GAD7', [1, 1, 1, 1, 1, 1, 1]), 'GAD-7 tuhle položku nemá');
+  });
+
+  await it('normalizace odmítne poškozený dotazník', () => {
+    eq(INS.normalizeAssessment(null), null);
+    eq(INS.normalizeAssessment({ instrument: 'XX', items: [], takenAt: '2026-01-01T00:00:00Z' }), null);
+    eq(INS.normalizeAssessment({ instrument: 'GAD7', items: [1, 2], takenAt: '2026-01-01T00:00:00Z' }),
+      null, 'špatný počet položek:');
+    eq(INS.normalizeAssessment({ instrument: 'GAD7', items: [0, 0, 0, 0, 0, 0, 9],
+      takenAt: '2026-01-01T00:00:00Z' }), null, 'hodnota mimo škálu:');
+    eq(INS.normalizeAssessment({ instrument: 'GAD7', items: [0, 0, 0, 0, 0, 0, 0],
+      takenAt: 'nesmysl' }), null, 'neplatné datum:');
+
+    const good = INS.normalizeAssessment({
+      instrument: 'GAD7', items: [1, 1, 1, 1, 1, 1, 1],
+      takenAt: '2026-01-01T00:00:00.000Z', day: '2026-01-01'
+    });
+    eq(good.total, 7); eq(good.band, 'mild');
+  });
+}
+
+/* ── záznam myšlenky ─────────────────────────────────────────── */
+
+async function testThoughts() {
+  describe('Záznam myšlenky');
+
+  await it('formulář má osm kroků v pořadí, které dává smysl', () => {
+    eq(TH.STEPS.length, 8);
+    eq(TH.STEPS.map((x) => x.key), ['situation', 'emotions', 'thought', 'distortions',
+      'evidenceFor', 'evidenceAgainst', 'alternative', 'after']);
+    // Myšlenka se hledá až po situaci a pocitu, jinak se popisuje domněnka.
+    ok(TH.STEPS.findIndex((x) => x.key === 'thought')
+      > TH.STEPS.findIndex((x) => x.key === 'situation'), 'myšlenka až po situaci');
+    // Protidůkaz musí přijít až po důkazu, ne naopak.
+    ok(TH.STEPS.findIndex((x) => x.key === 'evidenceAgainst')
+      > TH.STEPS.findIndex((x) => x.key === 'evidenceFor'), 'protidůkaz až po důkazu');
+    ok(TH.STEPS.every((x) => x.title && x.hint), 'každý krok má nadpis i nápovědu');
+  });
+
+  await it('záznam je platný od situace nebo myšlenky', () => {
+    const r = TH.makeRecord('2026-09-01');
+    ok(!TH.isValid(r), 'prázdný záznam se neukládá');
+    r.situation = 'Porada.';
+    ok(TH.isValid(r), 'samotná situace stačí');
+    ok(!TH.isComplete(r), 'k dokončení chybí alternativa i přeměření');
+    r.thought = 'Nezvládnu to.';
+    r.alternative = 'Tenhle úkol je těžký.';
+    r.intensityAfter = 40;
+    ok(TH.isComplete(r), 'dokončený záznam');
+  });
+
+  await it('posun se počítá jen z obou měření', () => {
+    const r = TH.makeRecord('2026-09-01');
+    r.intensityBefore = 80;
+    eq(TH.shift(r), null, 'bez druhého měření není posun');
+    r.intensityAfter = 55;
+    eq(TH.shift(r), -25, 'zmírnění je záporné číslo');
+    r.beliefBefore = 90; r.beliefAfter = 90;
+    eq(TH.beliefShift(r), 0, 'beze změny je nula, ne null');
+  });
+
+  await it('normalizace ořeže hodnoty a zahodí neznámé vzorce', () => {
+    eq(TH.normalize(null), null);
+    eq(TH.normalize({ day: 'nesmysl', thought: 'x' }), null, 'špatný klíč dne:');
+    eq(TH.normalize({ day: '2026-09-01' }), null, 'prázdný záznam:');
+
+    const r = TH.normalize({
+      day: '2026-09-01',
+      thought: 'Nezvládnu to.',
+      emotions: ['anxiety', 'anxiety', 42],
+      distortions: ['catastrophizing', 'vymyslene'],
+      intensityBefore: 250, intensityAfter: -10, beliefBefore: 61.4
+    });
+    eq(r.emotions, ['anxiety'], 'duplicity a nesmysly pryč:');
+    eq(r.distortions, ['catastrophizing'], 'neznámý vzorec pryč:');
+    eq(r.intensityBefore, 100, 'nad rozsah:');
+    eq(r.intensityAfter, 0, 'pod rozsah:');
+    eq(r.beliefBefore, 61, 'zaokrouhlení:');
+  });
+
+  await it('každý vzorec má popisek i vysvětlení', () => {
+    ok(TH.DISTORTIONS.length >= 10, 'málo vzorců');
+    const ids = new Set();
+    for (const d of TH.DISTORTIONS) {
+      ok(d.label && d.desc, `${d.id}: chybí text`);
+      ok(!ids.has(d.id), `duplicitní id ${d.id}`);
+      ids.add(d.id);
+    }
+  });
+}
+
+/* ── nová úložiště ───────────────────────────────────────────── */
+
+async function testNewStores() {
+  describe('Historie dotazníků a myšlenek');
+
+  db.useDatabase(TEST_DB + '-v2');
+  await new Promise((res) => {
+    const r = indexedDB.deleteDatabase(TEST_DB + '-v2');
+    r.onsuccess = r.onerror = r.onblocked = res;
+  });
+
+  await it('dotazníky se ukládají a čtou seřazené podle času', async () => {
+    const mk = (instrument, day, items) => ({
+      instrument, takenAt: new Date(day + 'T20:00:00').toISOString(), day,
+      items, total: INS.total(instrument, items),
+      band: INS.bandFor(instrument, INS.total(instrument, items)).key
+    });
+    // Schválně v opačném pořadí, než v jakém se mají vrátit.
+    await db.putAssessment(mk('PHQ9', '2026-08-15', new Array(9).fill(2)));
+    await db.putAssessment(mk('PHQ9', '2026-08-01', new Array(9).fill(1)));
+    await db.putAssessment(mk('GAD7', '2026-08-10', new Array(7).fill(1)));
+
+    const phq = await db.assessmentsFor('PHQ9');
+    eq(phq.length, 2, 'index nesmí míchat dotazníky dohromady');
+    eq(phq.map((a) => a.day), ['2026-08-01', '2026-08-15'], 'pořadí:');
+    eq((await db.lastAssessment('PHQ9')).total, 18, 'poslední vyplnění:');
+    eq((await db.lastAssessment('GAD7')).total, 7);
+    eq(await db.countAssessments(), 3);
+    eq(await db.lastAssessment('WHO5'), undefined, 'nevyplněný dotazník nemá poslední záznam');
+  });
+
+  await it('záznamy myšlenek se ukládají, hledají podle dne a mažou', async () => {
+    const a = TH.makeRecord('2026-08-20'); a.thought = 'Nezvládnu to.';
+    const b = TH.makeRecord('2026-08-20'); b.thought = 'Nikoho to nezajímá.';
+    const c = TH.makeRecord('2026-08-21'); c.situation = 'Jiný den.';
+
+    const idA = await db.putThought(a);
+    await db.putThought(b);
+    await db.putThought(c);
+
+    eq(await db.countThoughts(), 3);
+    eq((await db.thoughtsForDay('2026-08-20')).length, 2, 'dva záznamy v jednom dni');
+    eq((await db.thoughtsForDay('2026-08-21')).length, 1);
+    eq((await db.thoughtsForDay('2026-08-22')).length, 0, 'den bez záznamu');
+
+    const loaded = await db.getThought(idA);
+    eq(loaded.thought, 'Nezvládnu to.', 'záznam se načte podle klíče');
+
+    await db.deleteThought(idA);
+    eq(await db.countThoughts(), 2);
+    eq(await db.getThought(idA), undefined, 'smazaný záznam je pryč');
+  });
+
+  await it('záloha unese dny, dotazníky i záznamy myšlenek najednou', async () => {
+    const payload = JSON.parse(JSON.stringify({
+      app: 'soumrak',
+      schemaVersion: M.SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      days: await db.allDays(),
+      assessments: await db.allAssessments(),
+      thoughts: await db.allThoughts()
+    }));
+
+    const parsed = M.parseBackup(payload);
+    ok(parsed !== null, 'záloha musí projít');
+    eq(parsed.assessments.length, 3, 'dotazníky:');
+    eq(parsed.thoughts.length, 2, 'záznamy myšlenek:');
+    eq(parsed.assessments[0].total, INS.total('PHQ9', new Array(9).fill(2)), 'skór přežil kolo');
+
+    // Starší záloha bez nových částí je pořád platná.
+    const old = M.parseBackup({ app: 'soumrak', days: [{ day: '2026-07-01', mood: 1 }] });
+    eq(old.days.length, 1);
+    eq(old.assessments, [], 'chybějící dotazníky jsou prázdné pole, ne undefined');
+    eq(old.thoughts, []);
+  });
+
+  await new Promise((res) => {
+    const r = indexedDB.deleteDatabase(TEST_DB + '-v2');
+    r.onsuccess = r.onerror = r.onblocked = res;
+  });
+
+  await it('přechod z verze 1 nesmí sáhnout na existující dny', async () => {
+    const NAME = TEST_DB + '-migrate';
+    await new Promise((res) => {
+      const r = indexedDB.deleteDatabase(NAME);
+      r.onsuccess = r.onerror = r.onblocked = res;
+    });
+
+    // Databáze tak, jak ji nechala fáze 1 — jen tři úložiště, verze 1.
+    await new Promise((res, rej) => {
+      const req = indexedDB.open(NAME, 1);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        d.createObjectStore('days', { keyPath: 'day' });
+        d.createObjectStore('settings', { keyPath: 'k' });
+        d.createObjectStore('meta', { keyPath: 'k' });
+      };
+      req.onsuccess = () => {
+        const d = req.result;
+        const t = d.transaction('days', 'readwrite');
+        t.objectStore('days').put({ schemaVersion: 1, day: '2026-06-01', mood: -2, tags: ['work'] });
+        t.oncomplete = () => { d.close(); res(); };
+        t.onerror = () => rej(t.error);
+      };
+      req.onerror = () => rej(req.error);
+    });
+
+    db.useDatabase(NAME);
+    const kept = await db.getDay('2026-06-01');
+    eq(kept.mood, -2, 'starý zápis musí migraci přežít');
+    eq(kept.tags, ['work'], 'i se štítky');
+    eq(await db.countAssessments(), 0, 'nová úložiště vzniknou prázdná');
+    eq(await db.countThoughts(), 0);
+
+    // A rovnou ověřit, že se do nich po migraci dá psát.
+    const r = TH.makeRecord('2026-06-01');
+    r.thought = 'test';
+    await db.putThought(r);
+    eq(await db.countThoughts(), 1);
+
+    await new Promise((res) => {
+      const rq = indexedDB.deleteDatabase(NAME);
+      rq.onsuccess = rq.onerror = rq.onblocked = res;
+    });
+  });
+
+  db.useDatabase('soumrak');
+}
+
 /* ── běh ─────────────────────────────────────────────────────── */
 
 export async function run() {
   results.length = 0;
   await testDates();
   await testModel();
+  await testText();
   await testStats();
+  await testInstruments();
+  await testThoughts();
   await testDb();
+  await testNewStores();
   return results;
 }

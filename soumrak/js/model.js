@@ -2,9 +2,11 @@
    Klíč dne je lokální "YYYY-MM-DD" — nikdy ne toISOString(), ta počítá v UTC
    a v našem pásmu by večerní zápis spadl na následující den. */
 
-import { WEEKDAYS_LONG, MONTHS_IN, QUADRANT } from './strings.cs.js';
+import { WEEKDAYS_LONG, MONTHS_IN, QUADRANT, EMOTIONS, STRATEGIES } from './strings.cs.js';
+import { normalizeAssessment } from './instruments.js';
+import { normalize as normalizeThought } from './thoughts.js';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** Hodina, do které se zápis ještě počítá k předchozímu dni. */
 export const NIGHT_CUTOFF_HOUR = 4;
@@ -18,6 +20,22 @@ export const SLEEP_STEP = 0.5;
 
 /** Strop poznámky. Není to technické omezení, ale rozhodnutí — viz SPEC §2.2. */
 export const NOTE_MAX = 280;
+
+/**
+ * Escapování do HTML. Aplikace skládá obrazovky přes innerHTML a do toho
+ * proudí i text, který napsal uživatel — vlastní štítek, poznámka, záznam
+ * myšlenky. Bez tohohle stačí štítek s ostrou závorkou a obrazovka se
+ * rozsype. Nahrazuje se i apostrof a uvozovka, protože text končí i uvnitř
+ * atributů (aria-label, placeholder).
+ */
+export function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 /** „6,5 h" — česká desetinná čárka, celé hodiny bez desetinné části. */
 export function formatHours(h) {
@@ -77,6 +95,11 @@ export function formatShort(key) {
   return `${d.getDate()}. ${d.getMonth() + 1}.`;
 }
 
+export function formatDate(key) {
+  const d = keyToDate(key);
+  return `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()}`;
+}
+
 export function formatTime(iso) {
   const d = new Date(iso);
   return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -91,15 +114,17 @@ export function makeEntry(day, now = new Date()) {
     day,
     createdAt: stamp,
     updatedAt: stamp,
-    retrospective: false,
+    // Příznak se rozhoduje v okamžiku vzniku záznamu. Pozdější oprava
+    // překlepu z něj nesmí udělat vzpomínku — viz touch().
+    retrospective: isRetrospective(day, now),
     mood: null,
     energy: null,
-    // Pole níž se v aplikaci zatím nevyplňují, ale jsou v modelu od začátku,
-    // aby pozdější fáze nemusely migrovat existující záznamy.
     anxiety: null,
     sleep: { hours: null, quality: null, bedtime: null, wake: null },
     meds: null,
     tags: [],
+    emotions: [],
+    strategies: [],
     note: '',
     helped: []
   };
@@ -109,6 +134,23 @@ export function makeEntry(day, now = new Date()) {
 export function isValid(entry) {
   return !!entry && has(entry.mood);
 }
+
+const idsFrom = (list) => new Set(list.map((x) => x.id));
+const EMOTION_IDS = idsFrom(EMOTIONS);
+const STRATEGY_IDS = idsFrom(STRATEGIES);
+
+const stringList = (v, allowed = null) => {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const x of v) {
+    if (typeof x !== 'string' || seen.has(x)) continue;
+    if (allowed && !allowed.has(x)) continue;
+    seen.add(x);
+    out.push(x);
+  }
+  return out;
+};
 
 /**
  * Doplní chybějící pole na dnešní tvar modelu. Používá se při obnově ze
@@ -128,8 +170,12 @@ export function normalize(raw) {
     ? clampSleep(e.sleep.hours) : null;
   e.sleep.quality = has(e.sleep.quality) && e.sleep.quality >= 1 && e.sleep.quality <= 5
     ? e.sleep.quality : null;
-  e.tags = Array.isArray(raw.tags) ? raw.tags.filter((t) => typeof t === 'string') : [];
-  e.helped = Array.isArray(raw.helped) ? raw.helped.filter((t) => typeof t === 'string') : [];
+  e.tags = stringList(raw.tags);
+  e.helped = stringList(raw.helped);
+  // Slovník emocí a strategií je uzavřený, takže se neznámé id zahodí —
+  // jinak by v přehledu visela položka, ke které neexistuje popisek.
+  e.emotions = stringList(raw.emotions, EMOTION_IDS);
+  e.strategies = stringList(raw.strategies, STRATEGY_IDS);
   e.meds = Array.isArray(raw.meds)
     ? raw.meds.filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, taken: !!m.taken }))
     : null;
@@ -148,21 +194,30 @@ export function normalize(raw) {
   return e;
 }
 
-/** Zápis starší než jeden den se označí jako zpětný — retrospektivní
-    vzpomínka je méně spolehlivá a statistiky ji musí umět vyloučit. */
+/** Zápis vzniklý víc než den po hodnoceném dni je vzpomínka, ne záznam —
+    retrospektivní údaj je méně spolehlivý a statistika ho musí umět vyloučit. */
 export function isRetrospective(day, now = new Date()) {
   return diffDays(day, logicalToday(now)) > 1;
 }
 
+/**
+ * Razítko úpravy. Příznak `retrospective` se schválně nepřepisuje: kdyby se
+ * počítal při každém uložení, stačilo by za týden opravit v starém dni
+ * překlep a poctivě zapsaný den by se navždy tvářil jako doplněný zpětně.
+ */
 export function touch(entry, now = new Date()) {
   entry.updatedAt = now.toISOString();
-  entry.retrospective = isRetrospective(entry.day, now);
   return entry;
 }
 
+/* ── záloha ──────────────────────────────────────────────────── */
+
 /**
- * Ověří obálku zálohy a vrátí očištěné záznamy, nebo null, když to záloha
+ * Ověří obálku zálohy a vrátí očištěná data, nebo null, když to záloha
  * Soumraku není. Čistá funkce — jde na ni pustit test bez souboru a bez DB.
+ *
+ * Vrací všechny tři druhy záznamů. Záloha, která by uměla vrátit jen náladu
+ * a zahodila dotazníky i záznamy myšlenek, není záloha.
  */
 export function parseBackup(data) {
   if (!data || typeof data !== 'object') return null;
@@ -171,19 +226,36 @@ export function parseBackup(data) {
   if (typeof data.schemaVersion === 'number' && data.schemaVersion > SCHEMA_VERSION) return null;
 
   const seen = new Set();
-  const out = [];
+  const days = [];
   for (const raw of data.days) {
     const e = normalize(raw);
     if (!e || seen.has(e.day)) continue;   // duplicitní den v souboru bereme jednou
     seen.add(e.day);
-    out.push(e);
+    days.push(e);
   }
-  return out;
+
+  const assessments = [];
+  if (Array.isArray(data.assessments)) {
+    for (const raw of data.assessments) {
+      const a = normalizeAssessment(raw);
+      if (a) assessments.push(a);
+    }
+  }
+
+  const thoughts = [];
+  if (Array.isArray(data.thoughts)) {
+    for (const raw of data.thoughts) {
+      const t = normalizeThought(raw);
+      if (t) thoughts.push(t);
+    }
+  }
+
+  return { days, assessments, thoughts };
 }
 
 /* ── cirkumplex ──────────────────────────────────────────────── */
 
-/** Vyplněná hodnota — null i undefined znamenají „nezadáno“. */
+/** Vyplněná hodnota — null i undefined znamenají „nezadáno". */
 export function has(v) {
   return v !== null && v !== undefined;
 }
